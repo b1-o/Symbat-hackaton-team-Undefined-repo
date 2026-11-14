@@ -60,10 +60,12 @@ npm run llm:check
 ```bash
 npm test          # unit/API/LLM-контракт
 npm run build     # production-сборка frontend
+npm run format:check # единый читаемый стиль
+npm run backup -- ./backups # online-копия SQLite с проверкой целостности
 npm run test:e2e  # browser smoke, нужен запущенный dev-сервер и Chromium
 ```
 
-Для e2e можно использовать системный Chromium:
+Установите браузер `npx playwright install chromium` или используйте системный Chromium:
 
 ```bash
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium npm run test:e2e
@@ -82,8 +84,22 @@ npm start
 
 В production non-demo требует пароль организатора не короче 12 символов и приватный код челленджа. HTTPS-cookie включены по умолчанию; для локального HTTP-теста их можно отключить `COOKIE_SECURE=false`. За доверенным reverse proxy задайте `TRUST_PROXY=1` и `APP_ORIGIN`.
 
+## Надёжность версии 0.3
+
+- Vite 6.4.6, проверенный `npm audit`: 0 известных уязвимостей на момент проверки;
+- CSP без небезопасного inline/eval в production, security headers, структурные логи без заметок и секретов;
+- пагинация витрины и кабинета, SQL-метрики независимо от размера страницы;
+- журнал решений организатора и полный CSV-экспорт;
+- online backup SQLite с integrity/foreign-key checks, Dockerfile/compose и CI;
+- graceful shutdown, WAL checkpoint, периодическая очистка истёкших сессий;
+- сохранение ключа команды в файл, error boundary, доступное мобильное меню и reduced-motion;
+- 45 unit/API/backup-тестов и браузерный smoke.
+
+Инструкции и границы готовности: [docs/OPERATIONS.md](docs/OPERATIONS.md). Это масштабируемый по этапам пилот на одном процессе, не обещание production SLA для 100 000 одновременных пользователей.
+
 ## Документация
 
+- [Эксплуатация, backup, CI и границы пилота](docs/OPERATIONS.md)
 - [Исследование](docs/RESEARCH.md)
 - [Стратегия роста, воронка, бюджет, roadmap, риски и кампания](docs/GROWTH_STRATEGY.md)
 - [Подключение SmallThinker](docs/SMALLTHINKER.md)

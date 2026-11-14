@@ -1,0 +1,35 @@
+services:
+  app:
+    build: .
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      DEMO_MODE: ${DEMO_MODE:-false}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      ORGANIZER_PASSWORD: ${ORGANIZER_PASSWORD:?Set a private organizer password}
+      CHALLENGE_ACCESS_CODE: ${CHALLENGE_ACCESS_CODE:?Set a private invitation code}
+      APP_ORIGIN: ${APP_ORIGIN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+      LLM_MODEL: ${LLM_MODEL:-smallthinker}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - startify-data:/app/data
+      - startify-backups:/app/backups
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  startify-data:
+  startify-backups:

@@ -1,0 +1,28 @@
+name: Quality checks
+on:
+  push:
+    branches: [main, 'arena/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npm audit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Backup smoke test
+        run: |
+          DB_PATH="$RUNNER_TEMP/check.db" node -e "import('./server/db.js').then(({createDatabase})=>createDatabase(process.env.DB_PATH).close())"
+          DB_PATH="$RUNNER_TEMP/check.db" npm run backup -- "$RUNNER_TEMP/backups"
