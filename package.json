@@ -1,12 +1,12 @@
 {
   "name": "startify-sprint",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "MVP школьной лиги стартап-спринтов поверх AI Startify для Symbat Hackathon",
+  "description": "Школьная лига стартапов AI Startify: команды, координаторы и организаторы. Надёжный пилот для Symbat Hackathon.",
   "scripts": {
     "dev": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
@@ -32,6 +32,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "prettier": "^3.10.1",
     "supertest": "^7.3.2",
-    "vite": "^6.4.6"
+    "vite": "^6.4.6",
+    "jsdom": "^31.0.1"
   }
 }

@@ -16,10 +16,14 @@ import {
   TriangleAlert,
   Megaphone,
   School,
+  Timer,
+  Hourglass,
+  Building2,
+  UserCog,
 } from 'lucide-react';
 import { Badge, Button, Card, SectionHead } from '../components/UI';
 import { downloadFile, number } from '../lib/api';
-import { funnelModel } from '../../server/lib.js';
+import { funnelModel, deadlineModel } from '../../server/lib.js';
 
 const BUDGET = [
   ['Продукт, аналитика и QA', 18000],
@@ -46,7 +50,72 @@ export default function Strategy() {
     [completion, setCompletion] = useState(60),
     [publication, setPublication] = useState(65),
     [approval, setApproval] = useState(90);
+  const [schoolsPerWeek, setSchoolsPerWeek] = useState(10),
+    [teamsPerSchool, setTeamsPerSchool] = useState(6),
+    [onboardingDays, setOnboardingDays] = useState(14);
   const model = funnelModel({ users, teamSize, activation, completion, publication, approval });
+  const dl = deadlineModel({
+    teamSize,
+    activation,
+    completion,
+    publication,
+    approval,
+    schoolsPerWeek,
+    teamsPerSchool,
+    onboardingDays,
+  });
+  const verdicts = {
+    reachable: [
+      'green',
+      'Арифметика сходится',
+      'Но только при выполнении всех условий ниже — это план национальной сети, не школьного клуба.',
+    ],
+    at_risk: [
+      'amber',
+      'На грани',
+      'Канал закрывает большую часть цели, но любой срыв недели ломает результат.',
+    ],
+    unreachable: [
+      'red',
+      'Недостижимо в этот срок',
+      'Ограничение — скорость подключения школ, а не проценты воронки.',
+    ],
+    no_time: [
+      'red',
+      'Не осталось полных волн',
+      'До дедлайна не успевает завершиться и пройти проверку ни один спринт.',
+    ],
+  };
+  const [verdictTone, verdictTitle, verdictText] = verdicts[dl.verdict];
+  const exportDeadline = () =>
+    downloadFile(
+      'startify-deadline-2026.json',
+      JSON.stringify(
+        {
+          disclaimer: 'Scenario, not a promise. Capacity is limited by school onboarding throughput.',
+          generatedAt: new Date().toISOString(),
+          assumptions: {
+            deadline: dl.deadline,
+            teamSize,
+            activation,
+            completion,
+            publication,
+            approval,
+            schoolsPerWeek,
+            teamsPerSchool,
+            onboardingDays,
+            sprintDays: 7,
+            schoolsPerCoordinator: 25,
+            reviewsPerModeratorWeek: 150,
+          },
+          result: dl,
+          commitmentByDec31: { schools: 20, teams: 120, approvedMinimum: 25 },
+        },
+        null,
+        2,
+      ),
+      'application/json',
+    );
   const totalBudget = BUDGET.reduce((s, b) => s + b[1], 0);
   const exportModel = () =>
     downloadFile(
@@ -111,6 +180,7 @@ export default function Strategy() {
           ['research', 'Исследование', Globe2],
           ['plan', 'План и бюджет', CalendarDays],
           ['campaign', 'Кампания', Megaphone],
+          ['deadline', 'Дедлайн 31.12', Timer],
         ].map(([key, label, Icon]) => (
           <button
             role="tab"
@@ -671,9 +741,254 @@ export default function Strategy() {
           ·{' '}
           <a href="/docs/GROWTH_STRATEGY.md" target="_blank" rel="noreferrer">
             стратегия и модель ↗
+          </a>{' '}
+          ·{' '}
+          <a href="/docs/DEADLINE_2026.md" target="_blank" rel="noreferrer">
+            расчёт дедлайна ↗
           </a>
         </p>
       </div>
+      {tab === 'deadline' && (
+        <>
+          <div className="deadline-hero">
+            <div>
+              <span className="eyebrow">ВОПРОС, КОТОРЫЙ ЗАДАСТ ЖЮРИ</span>
+              <h2>
+                А если цель строго
+                <br />
+                до 31 декабря 2026?
+              </h2>
+              <p>
+                Считаем от календаря назад, а не от желаемого числа. Ограничение — сколько школ мы физически
+                подключаем за неделю.
+              </p>
+            </div>
+            <div className="deadline-clock">
+              <Timer size={26} />
+              <strong>{dl.daysLeft}</strong>
+              <span>дней до дедлайна</span>
+              <div className="deadline-waves">
+                {Array.from({ length: Math.max(dl.waves, 1) }).map((_, i) => (
+                  <i key={i} className={dl.waves ? 'filled' : ''} />
+                ))}
+              </div>
+              <small>{dl.waves} полных спринта успевают завершиться и пройти проверку</small>
+            </div>
+          </div>
+          <div className={`notice ${dl.verdict === 'reachable' ? '' : 'warning'} deadline-verdict`}>
+            <TriangleAlert size={20} />
+            <div>
+              <strong>{verdictTitle}</strong>
+              <p>{verdictText}</p>
+            </div>
+            <Badge tone={verdictTone}>{dl.capacity.shareOfGoal}% цели</Badge>
+          </div>
+          <div className="strategy-grid">
+            <Card className="calculator">
+              <div className="card-heading">
+                <h2>Что мы контролируем</h2>
+                <Badge tone="purple">Ёмкость канала</Badge>
+              </div>
+              <p className="muted">
+                Проценты воронки берутся с вкладки «Воронка и KPI». Здесь меняем то, что упирается в людей и
+                соглашения.
+              </p>
+              {[
+                [schoolsPerWeek, setSchoolsPerWeek, 'Школ подключаем в неделю', 1, 1500, 1, ''],
+                [teamsPerSchool, setTeamsPerSchool, 'Команд от одной школы', 1, 40, 1, ''],
+                [teamSize, setTeamSize, 'Средний размер команды', 1, 4, 0.5, ''],
+                [onboardingDays, setOnboardingDays, 'Дней на соглашения и обучение', 0, 40, 1, ''],
+              ].map(([value, setter, label, min, max, step, suffix]) => (
+                <label className="slider-field" key={label}>
+                  <span>
+                    {label}
+                    <strong>
+                      {number(value)}
+                      {suffix}
+                    </strong>
+                  </span>
+                  <input
+                    type="range"
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={value}
+                    onChange={(e) => setter(+e.target.value)}
+                  />
+                </label>
+              ))}
+              <div className="deadline-presets">
+                {[
+                  ['Органический пилот', 10, 6],
+                  ['Партнёрская сеть', 150, 12],
+                  ['Национальный роллаут', 1200, 12],
+                ].map(([name, spw, tps]) => (
+                  <button
+                    key={name}
+                    className="text-link"
+                    onClick={() => {
+                      setSchoolsPerWeek(spw);
+                      setTeamsPerSchool(tps);
+                      setOnboardingDays(14);
+                    }}
+                  >
+                    {name} <ArrowRight size={13} />
+                  </button>
+                ))}
+              </div>
+              <Button variant="ghost" onClick={exportDeadline}>
+                <Download size={16} />
+                Скачать расчёт
+              </Button>
+            </Card>
+            <Card className="projection">
+              <Badge tone={verdictTone}>РЕЗУЛЬТАТ ДО 31.12</Badge>
+              <h2>{number(dl.capacity.total)}</h2>
+              <p>публикаций успеем подтвердить с учётом стартовых 567</p>
+              <div className={`goal-status ${dl.gapApproved === 0 ? 'met' : ''}`}>
+                <Target size={18} />
+                {dl.gapApproved === 0
+                  ? 'Цель закрыта в этом сценарии'
+                  : `Не хватает ${number(dl.gapApproved)} подтверждённых проектов`}
+              </div>
+              <div className="deadline-compare">
+                <div>
+                  <span className="eyebrow">ТРЕБУЕТ ЦЕЛЬ</span>
+                  <dl>
+                    <dt>Команд</dt>
+                    <dd>{number(dl.required.teams)}</dd>
+                    <dt>Школ</dt>
+                    <dd>{number(dl.required.schools)}</dd>
+                    <dt>Школ в неделю</dt>
+                    <dd>{number(dl.required.schoolsPerWeek)}</dd>
+                    <dt>Проверок</dt>
+                    <dd>{number(dl.required.reviews)}</dd>
+                    <dt>Координаторов</dt>
+                    <dd>{number(dl.required.coordinators)}</dd>
+                    <dt>Модераторов</dt>
+                    <dd>{number(dl.required.moderators)}</dd>
+                  </dl>
+                </div>
+                <div>
+                  <span className="eyebrow">ВЫДЕРЖИТ КАНАЛ</span>
+                  <dl>
+                    <dt>Команд</dt>
+                    <dd>{number(dl.capacity.teams)}</dd>
+                    <dt>Школ</dt>
+                    <dd>{number(dl.capacity.schools)}</dd>
+                    <dt>Школ в неделю</dt>
+                    <dd>{number(schoolsPerWeek)}</dd>
+                    <dt>Проверок</dt>
+                    <dd>{number(dl.capacity.reviews)}</dd>
+                    <dt>Координаторов</dt>
+                    <dd>{number(dl.capacity.coordinators)}</dd>
+                    <dt>Модераторов</dt>
+                    <dd>{number(dl.capacity.moderators)}</dd>
+                  </dl>
+                </div>
+              </div>
+              {dl.onboardingMultiple > 1 && (
+                <small>
+                  Нужно подключать школы в <strong>{dl.onboardingMultiple}×</strong> быстрее, чем в этом
+                  сценарии. Размер команды на число проектов не влияет: один паспорт — одна команда.
+                </small>
+              )}
+            </Card>
+          </div>
+          <Card>
+            <div className="card-heading">
+              <h2>Что должно быть правдой, чтобы успеть</h2>
+              <Badge tone="amber">Все пункты одновременно</Badge>
+            </div>
+            <div className="deadline-conditions">
+              {[
+                [
+                  Building2,
+                  'Национальный партнёр до 21 ноября',
+                  'Соглашение с министерством, сетью хабов или крупной EdTech-сетью: рассылка сразу тысячам школ, а не согласование каждой.',
+                ],
+                [
+                  School,
+                  `${number(dl.required.schoolsPerWeek)} школ в неделю четыре недели подряд`,
+                  'Это операционный конвейер подключения, а не маркетинговая кампания.',
+                ],
+                [
+                  Users,
+                  `${teamsPerSchool}+ команд от школы`,
+                  'Участвуют классы, а не один кружок. При 6 командах на школу нужно вдвое больше школ.',
+                ],
+                [
+                  UserCog,
+                  `${number(dl.required.coordinators)} координаторов и ${number(dl.required.moderators)} модераторов`,
+                  'Обучены до первой волны. Один координатор ведёт 25 школ, модератор — 150 проверок в неделю.',
+                ],
+                [
+                  Hourglass,
+                  'Проверка укладывается в 48 часов',
+                  'Иначе проект опубликован в декабре, а зачёт получит уже в январе.',
+                ],
+                [
+                  Globe2,
+                  'Direction 01 приводит участников',
+                  'Наша воронка начинается с уже пришедших команд, а не создаёт трафик.',
+                ],
+              ].map(([Icon, title, text]) => (
+                <div key={title}>
+                  <span className="icon-tile purple">
+                    <Icon size={18} />
+                  </span>
+                  <div>
+                    <strong>{title}</strong>
+                    <p>{text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="notice warning">
+              Если хотя бы один пункт не выполняется, обещание «10 000 до конца года» нельзя защитить. Мы
+              показываем границу как результат исследования.
+            </div>
+          </Card>
+          <div className="scenario-grid">
+            <Card className="commitment-card">
+              <span className="eyebrow">НАШЕ ОБЯЗАТЕЛЬСТВО ДО 31.12</span>
+              <h3>20 школ · 120 команд · ≥25 зачётов</h3>
+              <p>
+                Нижняя граница, за которую команда отвечает без внешних условий. Совпадает с декабрьским
+                этапом roadmap.
+              </p>
+              <ul className="plain-list">
+                <li>Time to first value &lt; 10 минут</li>
+                <li>Проверка проекта &lt; 48 часов</li>
+                <li>Одна полная измеренная когорта</li>
+              </ul>
+              <small>Ценность декабря — не 25 проектов, а замена сценарных процентов фактами.</small>
+            </Card>
+            <Card>
+              <span className="eyebrow">ВАРИАНТ A</span>
+              <h3>Горизонт — 12 месяцев</h3>
+              <p>
+                Текущая стратегия корректна. Декабрь — gate с измеренной когортой, дальше управляемое
+                масштабирование до 10 000.
+              </p>
+              <button className="text-link" onClick={() => setTab('plan')}>
+                Посмотреть roadmap <ArrowRight size={14} />
+              </button>
+            </Card>
+            <Card>
+              <span className="eyebrow">ВАРИАНТ B</span>
+              <h3>Цель строго до 31.12</h3>
+              <p>
+                Тогда нужен подтверждённый национальный партнёр и операционный бюджет из списка условий.
+                Просим организаторов подтвердить это явно.
+              </p>
+              <a className="text-link" href="/docs/DEADLINE_2026.md" target="_blank" rel="noreferrer">
+                Полный расчёт и stop-rules <ArrowUpRight size={14} />
+              </a>
+            </Card>
+          </div>
+        </>
+      )}
     </>
   );
 }

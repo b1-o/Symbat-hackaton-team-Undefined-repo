@@ -21,6 +21,8 @@ import {
   Trophy,
   Zap,
   ChevronRight,
+  BellRing,
+  Fingerprint,
 } from 'lucide-react';
 import { Badge, Button, Card, Field, Modal, Progress, SectionHead, Status } from '../components/UI';
 import { api, patch, post, copyText, downloadFile, inviteLink } from '../lib/api';
@@ -214,7 +216,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
         .map((s) => `## ${s.index}. ${s.title}\n\n${drafts[s.index] || 'Черновик пока пуст.'}`)
         .join(
           '\n\n',
-        )}\n\n---\nСтатус: ${team.submission?.status || 'draft'}. Не является сертификатом AI Startify.`,
+        )}\n\nКод команды для описания паспорта: ${team.verificationCode || '—'}\n\n---\nСтатус: ${team.submission?.status || 'draft'}. Не является сертификатом AI Startify.`,
     );
   }
   return (
@@ -233,6 +235,40 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
           Экспорт заметок
         </Button>
       </SectionHead>
+      {(team.reminders || []).filter((r) => !r.readAt).length > 0 && (
+        <div className="reminder-strip">
+          {(team.reminders || [])
+            .filter((r) => !r.readAt)
+            .map((r) => (
+              <article className="reminder-item" key={r.id}>
+                <span className="icon-tile orange">
+                  <BellRing size={18} />
+                </span>
+                <div>
+                  <Badge tone="amber">
+                    {r.authorRole === 'teacher' ? 'Координатор школы' : 'Организатор'}
+                  </Badge>
+                  <p>{r.message}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  className="tiny"
+                  onClick={async () => {
+                    try {
+                      await post(`/api/team/reminders/${r.id}/read`, {});
+                      await refresh();
+                    } catch (e) {
+                      notify(e.message, 'error');
+                    }
+                  }}
+                >
+                  <Check size={14} />
+                  Прочитано
+                </Button>
+              </article>
+            ))}
+        </div>
+      )}
       <Card className="workspace-progress">
         <div className="workspace-progress-top">
           <div>
@@ -490,6 +526,35 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
             </div>
             <Status submission={team.submission} />
           </div>
+          {team.verificationCode && (
+            <div className="ownership-code">
+              <span className="icon-tile purple">
+                <Fingerprint size={20} />
+              </span>
+              <div>
+                <strong>Код вашей команды</strong>
+                <p>
+                  Добавьте его в описание проекта в AI Startify. Без кода организатор не сможет подтвердить,
+                  что публикация принадлежит вам.
+                </p>
+              </div>
+              <code>{team.verificationCode}</code>
+              <Button
+                variant="ghost"
+                className="tiny"
+                onClick={async () => {
+                  const ok = await copyText(team.verificationCode);
+                  notify(
+                    ok ? 'Код скопирован. Вставьте его в описание проекта.' : 'Скопируйте код вручную.',
+                    ok ? 'success' : 'error',
+                  );
+                }}
+              >
+                <Copy size={14} />
+                Копировать
+              </Button>
+            </div>
+          )}
           <div className="publication-flow">
             <div>
               <span>1</span>
@@ -507,8 +572,11 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
             <ArrowRight size={24} />
             <div>
               <span>2</span>
-              <h3>Отправь на проверку</h3>
-              <p>Организатор проверит доступность, оригинальность, полноту и безопасность паспорта.</p>
+              <h3>Добавь код команды</h3>
+              <p>
+                Вставь код ниже в описание проекта на AI Startify. Так организатор поймёт, что паспорт ваш, а
+                не чужой.
+              </p>
             </div>
             <ArrowRight size={24} />
             <div>

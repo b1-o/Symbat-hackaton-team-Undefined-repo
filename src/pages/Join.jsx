@@ -1,5 +1,14 @@
-import React, { useState } from 'react';
-import { ArrowRight, KeyRound, ShieldCheck, Copy, CheckCircle2, School, Download } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  ArrowRight,
+  KeyRound,
+  ShieldCheck,
+  Copy,
+  CheckCircle2,
+  School,
+  CalendarDays,
+  Download,
+} from 'lucide-react';
 import { Badge, Button, Card, Field, Modal, SectionHead } from '../components/UI';
 import { post, copyText, downloadFile } from '../lib/api';
 export default function Join({ data, refresh, navigate, notify, demoLogin }) {
@@ -19,9 +28,20 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
   const [credentials, setCredentials] = useState(null),
     [busy, setBusy] = useState(false),
     [loginForm, setLoginForm] = useState({ teamId: '', recoveryKey: '' });
+  const [challengeId, setChallengeId] = useState(data.challenge.id);
   const fromSchoolId = new URLSearchParams(window.location.search).get('from') || '';
   const school = data.schools.find((s) => s.id === fromSchoolId);
+  const season = data.challenges.find((c) => c.id === challengeId) || data.challenge;
   const update = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  // One opening of an invite link = one row. The server stores a daily rotating hash, not a person.
+  useEffect(() => {
+    if (fromSchoolId)
+      post('/api/invite/click', { schoolId: fromSchoolId, challengeId: data.challenge.id }).catch(() => {});
+  }, [fromSchoolId, data.challenge.id]);
+  function pickSeason(id) {
+    setChallengeId(id);
+    update('accessCode', id === data.challenge.id ? data.inviteHint || '' : '');
+  }
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
@@ -31,7 +51,7 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
         await refresh();
         navigate('/team');
       } else {
-        const r = await post('/api/teams', { ...form, fromSchoolId });
+        const r = await post('/api/teams', { ...form, fromSchoolId, challengeId });
         setCredentials(r);
         await refresh();
       }
@@ -90,6 +110,26 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
               </>
             ) : (
               <>
+                {data.challenges.length > 1 && (
+                  <Field
+                    label="Сезон спринта"
+                    className="full-width"
+                    hint={
+                      season.isOpen
+                        ? 'Код приглашения у каждого сезона свой.'
+                        : 'Этот сезон закрыт для новых команд.'
+                    }
+                  >
+                    <select value={challengeId} onChange={(e) => pickSeason(e.target.value)}>
+                      {data.challenges.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                          {c.isOpen ? '' : ' · закрыт'}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
                 <Field label="Код приглашения" hint="Получите код у учителя или организатора.">
                   <input
                     required
@@ -191,6 +231,14 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
               </button>
             </div>
           )}
+          <div className="join-demo">
+            <span>
+              <School size={14} /> Вы ведёте класс?
+            </span>
+            <button className="text-link" onClick={() => navigate('/teacher')}>
+              Кабинет координатора школы <ArrowRight size={14} />
+            </button>
+          </div>
         </Card>
         <div className="join-aside">
           <span className="icon-tile lime">

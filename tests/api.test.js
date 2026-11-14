@@ -462,18 +462,14 @@ test('CSP is restrictive and production does not allow development eval', async 
   assert.match(response.headers['content-security-policy'], /upgrade-insecure-requests/);
   assert.ok(!response.headers['content-security-policy'].includes('unsafe-eval'));
   assert.equal(response.headers['x-powered-by'], undefined);
-  assert.equal(response.body.version, '0.3.0');
+  assert.equal(response.body.version, '0.5.0');
 });
 
 test('SQL activation metrics handle mature cohorts and never infer historical activity', async (t) => {
   const { db } = setup(t, { seedDemo: false });
-  db.prepare('INSERT INTO schools VALUES (?, ?, ?, ?, ?, 0)').run(
-    's-metric',
-    'Metric School',
-    'metric school',
-    'KZ',
-    '',
-  );
+  db.prepare(
+    'INSERT INTO schools (id,name,normalized_name,country_code,city,is_demo) VALUES (?, ?, ?, ?, ?, 0)',
+  ).run('s-metric', 'Metric School', 'metric school', 'KZ', '');
   db.prepare(
     'INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run('t-metric', 'challenge-2026', 's-metric', 'Metric', 'metric', 'Student', '2026-01-01T00:00:00.000Z');

@@ -31,6 +31,7 @@ import League from './pages/League';
 import Strategy from './pages/Strategy';
 import Organizer from './pages/Organizer';
 import Join from './pages/Join';
+import Teacher from './pages/Teacher';
 
 const NAV = [
   ['/', 'Обзор', LayoutDashboard],
@@ -70,6 +71,7 @@ export default function App() {
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, [mobile, smallScreen]);
+
   const notify = useCallback((message, tone = 'success') => {
     clearTimeout(timer.current);
     setToast({ message, tone });
@@ -102,17 +104,34 @@ export default function App() {
     };
   }, [refresh]);
   useEffect(() => {
-    document.title = `${[...NAV, ['/organizer', 'Организатор'], ['/join', 'Вступить в спринт']].find((n) => n[0] === route)?.[1] || 'Обзор'} · Startify Sprint`;
+    document.title = `${[...NAV, ['/organizer', 'Организатор'], ['/teacher', 'Кабинет школы'], ['/join', 'Вступить в спринт']].find((n) => n[0] === route)?.[1] || 'Обзор'} · Startify Sprint`;
   }, [route]);
-  async function demoLogin(role, teamId) {
+  async function demoLogin(role, targetId) {
+    const body = {
+      role,
+      ...(role === 'team' ? { teamId: targetId } : role === 'teacher' ? { schoolId: targetId } : {}),
+    };
+    const target = role === 'organizer' ? '/organizer' : role === 'teacher' ? '/teacher' : '/team';
+    const message =
+      role === 'organizer'
+        ? 'Открыт демо-кабинет организатора.'
+        : role === 'teacher'
+          ? 'Открыт демо-кабинет школы.'
+          : 'Вы в демо-команде. Можно начинать!';
     try {
-      await post('/api/demo/login', { role, teamId });
+      await post('/api/demo/login', body);
       await refresh();
       setProfile(false);
-      navigate(role === 'organizer' ? '/organizer' : '/team');
-      notify(
-        role === 'organizer' ? 'Открыт демо-кабинет организатора.' : 'Вы в демо-команде. Можно начинать!',
-      );
+      navigate(target);
+      notify(message);
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  }
+  async function markRead(reminderId) {
+    try {
+      await post(`/api/team/reminders/${reminderId}/read`, {});
+      await refresh();
     } catch (e) {
       notify(e.message, 'error');
     }
@@ -147,19 +166,21 @@ export default function App() {
     '/leaderboard': <League {...ctx} />,
     '/strategy': <Strategy {...ctx} />,
     '/organizer': <Organizer {...ctx} />,
+    '/teacher': <Teacher {...ctx} />,
     '/join': <Join {...ctx} />,
   };
+  const unread = me.role === 'team' ? (me.team.reminders || []).filter((r) => !r.readAt) : [];
   const matches = search.trim()
     ? [
         ...NAV.map((n) => ({ title: n[1], route: n[0], type: 'Раздел' })),
-        ...data.projects
-          .filter((p) => p.title.toLowerCase().includes(search.toLowerCase()))
-          .map((p) => ({
-            title: p.title,
-            route: `/showcase?q=${encodeURIComponent(p.title)}`,
-            type: 'Проект',
-          })),
-      ].slice(0, 6)
+        ...data.projects.map((p) => ({
+          title: p.title,
+          route: `/showcase?q=${encodeURIComponent(p.title)}`,
+          type: 'Проект',
+        })),
+      ]
+        .filter((x) => x.title.toLowerCase().includes(search.toLowerCase()))
+        .slice(0, 6)
     : [];
   return (
     <div className="shell">
@@ -221,6 +242,14 @@ export default function App() {
         </div>
         <div className="sidebar-bottom">
           <button
+            className={`nav-item ${route === '/teacher' ? 'active' : ''}`}
+            onClick={() => navigate('/teacher')}
+          >
+            <School size={18} />
+            Кабинет школы
+            {unread.length > 0 && me.role === 'teacher' && <span className="nav-count">{unread.length}</span>}
+          </button>
+          <button
             className={`nav-item ${route === '/organizer' ? 'active' : ''}`}
             onClick={() => navigate('/organizer')}
           >
@@ -256,9 +285,12 @@ export default function App() {
             <span>Рабочее пространство</span>
             <span className="slash">/</span>
             <strong>
-              {[...NAV, ['/organizer', 'Организатор'], ['/join', 'Вступить']].find(
-                (n) => n[0] === route,
-              )?.[1] || 'Обзор'}
+              {[
+                ...NAV,
+                ['/organizer', 'Организатор'],
+                ['/teacher', 'Кабинет школы'],
+                ['/join', 'Вступить'],
+              ].find((n) => n[0] === route)?.[1] || 'Обзор'}
             </strong>
           </div>
           <div className="top-actions">
@@ -299,23 +331,42 @@ export default function App() {
             <div className="notification-wrap">
               <button
                 className="icon-btn bell"
-                aria-label="Уведомления"
+                aria-label={unread.length ? `Уведомления: ${unread.length} новых` : 'Уведомления'}
                 onClick={() => setNotifications(!notifications)}
               >
                 <Bell size={19} />
-                <i />
+                {unread.length > 0 && <i className="has-unread" />}
               </button>
               {notifications && (
                 <div className="notification-panel">
                   <strong>Ваш спринт</strong>
+                  {unread.length > 0 && (
+                    <div className="notification-list">
+                      {unread.map((r) => (
+                        <div className="notification-item" key={r.id}>
+                          <Badge tone="purple">
+                            {r.authorRole === 'teacher' ? 'Координатор школы' : 'Организатор'}
+                          </Badge>
+                          <p>{r.message}</p>
+                          <button className="text-link" onClick={() => markRead(r.id)}>
+                            Прочитано <CheckCircle2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <p>
                     {me.role === 'team'
                       ? `Пройдено ${me.team.steps.filter((s) => s.completed).length} из 5 этапов. ${me.team.submission?.status === 'returned' ? 'Проект ждёт доработки.' : 'Следующий маленький шаг уже ждёт в инкубаторе.'}`
-                      : 'Соберите команду и превратите школьную проблему в первый стартап.'}
+                      : me.role === 'teacher'
+                        ? 'Откройте кабинет школы: там видно, какие команды застряли.'
+                        : 'Соберите команду и превратите школьную проблему в первый стартап.'}
                   </p>
                   <button
                     className="text-link"
-                    onClick={() => navigate(me.role === 'team' ? '/team' : '/join')}
+                    onClick={() =>
+                      navigate(me.role === 'team' ? '/team' : me.role === 'teacher' ? '/teacher' : '/join')
+                    }
                   >
                     Продолжить <ArrowRight size={14} />
                   </button>
@@ -329,20 +380,26 @@ export default function App() {
                     ? me.team.name.slice(0, 2).toUpperCase()
                     : me.role === 'organizer'
                       ? 'ОР'
-                      : 'ST'}
+                      : me.role === 'teacher'
+                        ? 'КШ'
+                        : 'ST'}
                 </span>
                 <span className="profile-name">
                   {me.role === 'team'
                     ? me.team.name
                     : me.role === 'organizer'
                       ? 'Организатор'
-                      : 'Начать путь'}
+                      : me.role === 'teacher'
+                        ? me.school.name
+                        : 'Начать путь'}
                   <small>
                     {me.role === 'guest'
                       ? 'Гость пространства'
                       : me.role === 'team'
                         ? 'Моя команда'
-                        : 'Управление лигой'}
+                        : me.role === 'teacher'
+                          ? 'Координатор школы'
+                          : 'Управление лигой'}
                   </small>
                 </span>
                 <ChevronDown size={14} />
@@ -359,6 +416,10 @@ export default function App() {
                       <button onClick={() => demoLogin('organizer')}>
                         <ShieldCheck size={16} />
                         Демо-организатор
+                      </button>
+                      <button onClick={() => demoLogin('teacher')}>
+                        <School size={16} />
+                        Демо-координатор
                       </button>
                     </>
                   )}

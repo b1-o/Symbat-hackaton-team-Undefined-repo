@@ -1,9 +1,16 @@
 /** Aggregate funnel and activation metrics, independent of page size. */
-export function calculateMetrics(db, includeDemo = true) {
-  const filter = includeDemo ? '' : 'WHERE s.is_demo=0';
-  const teamFilter = includeDemo
-    ? ''
-    : 'AND team_id IN (SELECT t.id FROM teams t JOIN schools s ON s.id=t.school_id WHERE s.is_demo=0)';
+export function calculateMetrics(db, includeDemo = true, challengeId = null) {
+  const conditions = [],
+    params = [];
+  if (!includeDemo) conditions.push('s.is_demo=0');
+  if (challengeId) {
+    conditions.push('t.challenge_id=?');
+    params.push(challengeId);
+  }
+  const filter = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const teamFilter = conditions.length
+    ? 'AND team_id IN (SELECT t.id FROM teams t JOIN schools s ON s.id=t.school_id ' + filter + ')'
+    : '';
   const teams = db
     .prepare(
       `SELECT
@@ -17,7 +24,7 @@ export function calculateMetrics(db, includeDemo = true) {
     FROM teams t JOIN schools s ON s.id=t.school_id
     LEFT JOIN submissions sub ON sub.id=(SELECT id FROM submissions WHERE team_id=t.id ORDER BY updated_at DESC LIMIT 1) ${filter}`,
     )
-    .get();
+    .get(...params);
   const funnel = Object.fromEntries(
     Object.entries(teams)
       .filter(([k]) => !k.startsWith('referrals'))
@@ -31,7 +38,7 @@ export function calculateMetrics(db, includeDemo = true) {
     AVG(CASE WHEN source='llm' AND status='ok' THEN latency_ms END) latency_ms
     FROM llm_calls WHERE 1=1 ${teamFilter}`,
     )
-    .get();
+    .get(...params);
   // Aggregate historical events without loading all notes/events into process memory.
   const median = db
     .prepare(
@@ -40,17 +47,17 @@ export function calculateMetrics(db, includeDemo = true) {
       ROW_NUMBER() OVER (ORDER BY (julianday(n.created_at)-julianday(c.created_at))) rn,
       COUNT(*) OVER () n FROM events c JOIN events n ON n.team_id=c.team_id AND n.type='first_note'
     JOIN teams t ON t.id=c.team_id JOIN schools s ON s.id=t.school_id
-    WHERE c.type='team_created' AND n.created_at>=c.created_at ${includeDemo ? '' : 'AND s.is_demo=0'}
+    WHERE c.type='team_created' AND n.created_at>=c.created_at ${conditions.length ? 'AND ' + conditions.join(' AND ') : ''}
   ) SELECT AVG(minutes) median FROM first_values WHERE rn IN ((n+1)/2, (n+2)/2)`,
     )
-    .get().median;
+    .get(...params).median;
   const measuredTeams = db
     .prepare(
       `SELECT COUNT(*) n FROM events e JOIN events c ON c.team_id=e.team_id
     AND c.type='team_created' AND e.created_at>=c.created_at JOIN teams t ON t.id=e.team_id
-    JOIN schools s ON s.id=t.school_id WHERE e.type='first_note' ${includeDemo ? '' : 'AND s.is_demo=0'}`,
+    JOIN schools s ON s.id=t.school_id WHERE e.type='first_note' ${conditions.length ? 'AND ' + conditions.join(' AND ') : ''}`,
     )
-    .get().n;
+    .get(...params).n;
   const retention = db
     .prepare(
       `SELECT COUNT(*) eligible, SUM(CASE WHEN EXISTS (
@@ -58,9 +65,9 @@ export function calculateMetrics(db, includeDemo = true) {
     AND a.created_at>=datetime(n.created_at, '+6 days') AND a.created_at<=datetime(n.created_at, '+8 days')
     ) THEN 1 ELSE 0 END) returned FROM events n JOIN teams t ON t.id=n.team_id
     JOIN schools s ON s.id=t.school_id WHERE n.type='first_note' AND n.created_at<=datetime('now', '-8 days')
-    ${includeDemo ? '' : 'AND s.is_demo=0'}`,
+    ${conditions.length ? 'AND ' + conditions.join(' AND ') : ''}`,
     )
-    .get();
+    .get(...params);
   return {
     ...teams,
     funnel,

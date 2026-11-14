@@ -13,13 +13,9 @@ test('online backup includes committed WAL changes and passes integrity checks',
   const filename = path.join(directory, 'source.db');
   const db = createDatabase(filename, { seedDemo: false });
   try {
-    db.prepare('INSERT INTO schools VALUES (?, ?, ?, ?, ?, 0)').run(
-      'school-backup',
-      'Backup School',
-      'backup school',
-      'KZ',
-      'Almaty',
-    );
+    db.prepare(
+      'INSERT INTO schools (id,name,normalized_name,country_code,city,is_demo) VALUES (?, ?, ?, ?, ?, 0)',
+    ).run('school-backup', 'Backup School', 'backup school', 'KZ', 'Almaty');
     const { stdout } = await exec(process.execPath, ['scripts/backup.js', path.join(directory, 'backups')], {
       env: { ...process.env, DB_PATH: filename },
     });

@@ -13,9 +13,27 @@ import {
   ChevronDown,
   ArrowRight,
   Search,
+  BellRing,
+  School,
+  KeyRound,
+  CalendarDays,
+  RotateCcw,
+  Copy,
+  TriangleAlert,
+  Fingerprint,
 } from 'lucide-react';
-import { Badge, Button, Card, Empty, Field, SectionHead, Status } from '../components/UI';
-import { api, post } from '../lib/api';
+import { Badge, Button, Card, Empty, Field, Modal, SectionHead, Status } from '../components/UI';
+import { api, post, patch, copyText, formatDate } from '../lib/api';
+// A demo passport does not exist, so ownership cannot be proven for it. Real pilot projects must carry the team code.
+const reviewItems = (item) => [
+  ['accessible', 'Паспорт доступен'],
+  ['original', 'Не дублирует другой проект'],
+  ['safe', 'Без личных данных и опасного содержания'],
+  ['complete', 'Проблема, решение и материалы заполнены'],
+  ...(item.schoolIsDemo
+    ? []
+    : [['ownership', `Код ${item.verification_code || 'команды'} найден в описании паспорта`]]),
+];
 export default function Organizer({ data, me, refresh, notify, demoLogin }) {
   const [org, setOrg] = useState(null),
     [includeDemo, setIncludeDemo] = useState(true),
@@ -25,12 +43,20 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
     [password, setPassword] = useState(''),
     [error, setError] = useState(''),
     [query, setQuery] = useState('');
+  const [scope, setScope] = useState(''),
+    [schools, setSchools] = useState([]),
+    [issuedKey, setIssuedKey] = useState(null),
+    [reminder, setReminder] = useState(null),
+    [reminderText, setReminderText] = useState('');
+  const [season, setSeason] = useState({ title: '', days: 7 }),
+    [newSeason, setNewSeason] = useState(null);
+  const scopeQuery = scope ? `&challenge=${encodeURIComponent(scope)}` : '';
   const requestVersion = React.useRef(0);
   const load = useCallback(async () => {
     const version = ++requestVersion.current;
     if (me.role !== 'organizer') return;
     try {
-      const result = await api(`/api/organizer?includeDemo=${includeDemo}`);
+      const result = await api(`/api/organizer?includeDemo=${includeDemo}${scopeQuery}`);
       if (version === requestVersion.current) {
         setOrg(result);
         setError('');
@@ -38,15 +64,28 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
     } catch (e) {
       if (version === requestVersion.current) setError(e.message);
     }
-  }, [me.role, includeDemo]);
+  }, [me.role, includeDemo, scopeQuery]);
+  const loadSchools = useCallback(async () => {
+    if (me.role !== 'organizer') return;
+    try {
+      setSchools((await api('/api/organizer/schools')).schools);
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [me.role]);
   useEffect(() => {
     load();
   }, [load]);
+  useEffect(() => {
+    loadSchools();
+  }, [loadSchools]);
   async function loadMore(kind) {
+    const version = requestVersion.current;
     setBusy(kind);
     try {
       const offset = kind === 'teams' ? org.page.nextTeamsOffset : org.page.nextPendingOffset;
-      const r = await api(`/api/organizer?includeDemo=${includeDemo}&limit=50&offset=${offset}`);
+      const r = await api(`/api/organizer?includeDemo=${includeDemo}${scopeQuery}&limit=50&offset=${offset}`);
+      if (version !== requestVersion.current) return;
       setOrg((old) => ({
         ...r,
         teams: kind === 'teams' ? [...old.teams, ...r.teams] : r.teams,
@@ -59,7 +98,7 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
         },
       }));
     } catch (e) {
-      notify(e.message, 'error');
+      if (version === requestVersion.current) notify(e.message, 'error');
     } finally {
       setBusy('');
     }
@@ -109,9 +148,86 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
       setBusy('');
     }
   }
+  async function remind(e) {
+    e.preventDefault();
+    setBusy('remind');
+    try {
+      await post('/api/organizer/reminders', { teamId: reminder.id, message: reminderText });
+      setReminder(null);
+      setReminderText('');
+      await load();
+      notify('Напоминание отправлено команде.');
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+  async function issueKey(school) {
+    setBusy(school.id);
+    try {
+      setIssuedKey({
+        ...(await post(`/api/organizer/schools/${school.id}/coordinator`, {
+          coordinatorName: school.coordinator_name || '',
+        })),
+        schoolName: school.name,
+      });
+      await loadSchools();
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+  async function createSeason(e) {
+    e.preventDefault();
+    setBusy('season');
+    try {
+      const r = await post('/api/organizer/challenges', { title: season.title, days: Number(season.days) });
+      setNewSeason(r);
+      setSeason({ title: '', days: 7 });
+      await refresh();
+      notify('Новый сезон открыт. Код показывается один раз.');
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+  async function archiveSeason(id) {
+    if (!window.confirm('Закрыть сезон? Новые команды и заявки в него приниматься не будут.')) return;
+    setBusy(id);
+    try {
+      await patch(`/api/organizer/challenges/${id}`, { status: 'archived' });
+      await Promise.all([refresh(), load()]);
+      notify('Сезон закрыт.');
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+  async function resetDemo() {
+    if (
+      !window.confirm(
+        'Сбросить демо-команды и проекты к исходному состоянию? Реальные пилотные команды и сезоны сохранятся.',
+      )
+    )
+      return;
+    setBusy('reset');
+    try {
+      const r = await post('/api/demo/reset', {});
+      await Promise.all([refresh(), load(), loadSchools()]);
+      notify(`Демо восстановлено: ${r.seededTeams} учебных команд. Пилотные данные не тронуты.`);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
   async function exportCsv() {
     try {
-      const r = await fetch(`/api/organizer/export.csv?includeDemo=${includeDemo}`);
+      const r = await fetch(`/api/organizer/export.csv?includeDemo=${includeDemo}${scopeQuery}`);
       if (!r.ok) throw new Error('Не удалось выгрузить CSV.');
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement('a');
@@ -176,6 +292,26 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
         </Button>
       </SectionHead>
       <div className="org-toolbar">
+        {data.challenges.length > 1 && (
+          <label className="season-picker">
+            <CalendarDays size={15} />
+            <select aria-label="Сезон панели" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="">Все сезоны</option>
+              {data.challenges.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                  {c.status === 'archived' ? ' · закрыт' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {data.demoMode && (
+          <Button variant="ghost" className="tiny" busy={busy === 'reset'} onClick={resetDemo}>
+            <RotateCcw size={14} />
+            Сбросить демо
+          </Button>
+        )}
         <label className="toggle-label">
           <input type="checkbox" checked={includeDemo} onChange={(e) => setIncludeDemo(e.target.checked)} />
           Включая демо-команды
@@ -243,6 +379,15 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
             <span>
               LLM-ответов: <b>{org.usage.llm_success || 0}</b>
             </span>
+            <span>
+              Открытий приглашений: <b>{org.invites.clicks}</b>
+            </span>
+            <span>
+              Напоминаний прочитано:{' '}
+              <b>
+                {org.reminders.read}/{org.reminders.sent}
+              </b>
+            </span>
           </div>
           <Card className="activation-metrics">
             <h2>Качество активации</h2>
@@ -272,6 +417,54 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
               События пишутся сервером. Для старых демо-команд история не выдумывается. D7 — возврат на 6–8-й
               день после первой заметки, только для когорт возрастом от 8 дней.
             </p>
+          </Card>
+          <Card className="attention-card">
+            <div className="card-heading">
+              <div>
+                <span className="eyebrow">УДЕРЖАНИЕ КОГОРТЫ</span>
+                <h2>Кому помочь сейчас</h2>
+              </div>
+              <Badge tone={org.attention.length ? 'amber' : 'green'}>{org.attention.length} команд</Badge>
+            </div>
+            <p className="muted">
+              Команды, которым один звонок координатора может вернуть шанс на публикацию. Порядок — по
+              ценности вмешательства.
+            </p>
+            {!org.attention.length && (
+              <Empty
+                title="Никто не застрял"
+                text="Все команды этого среза двигаются или уже подтверждены."
+              />
+            )}
+            <div className="attention-list">
+              {org.attention.slice(0, 12).map((item) => (
+                <article className="attention-row" key={item.id}>
+                  <div>
+                    <strong>{item.name}</strong>
+                    {item.isDemo && <Badge>Демо</Badge>}
+                    <small className="table-sub">
+                      {item.schoolName} · {item.stepsCompleted}/5 этапов
+                    </small>
+                  </div>
+                  <Badge tone={item.reason.tone}>{item.reason.label}</Badge>
+                  <Button
+                    variant="ghost"
+                    className="tiny"
+                    onClick={() => {
+                      setReminder(item);
+                      setReminderText(
+                        item.reason.code === 'ready'
+                          ? 'Ваши четыре этапа готовы. Опубликуйте паспорт в AI Startify и отправьте ссылку на проверку.'
+                          : '',
+                      );
+                    }}
+                  >
+                    <BellRing size={14} />
+                    Напомнить
+                  </Button>
+                </article>
+              ))}
+            </div>
           </Card>
           <Card className="review-section">
             <div className="card-heading">
@@ -313,6 +506,29 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
                   {item.url}
                   <ExternalLink size={14} />
                 </a>
+                {item.verification_code && (
+                  <div className="ownership-check">
+                    <Fingerprint size={16} />
+                    <span>
+                      Код команды в описании паспорта: <code>{item.verification_code}</code>
+                    </span>
+                    <button
+                      className="btn tiny ghost"
+                      onClick={async () => {
+                        const ok = await copyText(item.verification_code);
+                        notify(
+                          ok
+                            ? 'Код скопирован. Найдите его на странице паспорта.'
+                            : 'Скопируйте код вручную.',
+                          ok ? 'success' : 'error',
+                        );
+                      }}
+                    >
+                      <Copy size={13} />
+                      Копировать
+                    </button>
+                  </div>
+                )}
                 <details className="review-evidence">
                   <summary>
                     Рабочая тетрадь команды <ChevronDown size={15} />
@@ -339,12 +555,7 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
                   />
                 </Field>
                 <div className="review-checks">
-                  {[
-                    ['accessible', 'Паспорт доступен'],
-                    ['original', 'Не дублирует другой проект'],
-                    ['safe', 'Без личных данных и опасного содержания'],
-                    ['complete', 'Проблема, решение и материалы заполнены'],
-                  ].map(([key, label]) => (
+                  {reviewItems(item).map(([key, label]) => (
                     <label key={key}>
                       <input
                         type="checkbox"
@@ -366,7 +577,7 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
                 <div className="review-actions">
                   <Button
                     busy={busy === item.id}
-                    disabled={Object.values(checks[item.id] || {}).filter(Boolean).length !== 4}
+                    disabled={reviewItems(item).some(([key]) => !checks[item.id]?.[key])}
                     onClick={() => review(item.id, 'approve')}
                   >
                     <ShieldCheck size={16} />
@@ -382,7 +593,7 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
                 </div>
               </article>
             ))}
-            {org.page.nextPendingOffset !== null && (
+            {org.page?.nextPendingOffset != null && (
               <Button variant="ghost" busy={busy === 'pending'} onClick={() => loadMore('pending')}>
                 Показать ещё заявки
               </Button>
@@ -436,7 +647,7 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
                       ))}
                   </tbody>
                 </table>
-                {org.page.nextTeamsOffset !== null && (
+                {org.page?.nextTeamsOffset != null && (
                   <Button variant="ghost" busy={busy === 'teams'} onClick={() => loadMore('teams')}>
                     Показать ещё команды
                   </Button>
@@ -477,7 +688,222 @@ export default function Organizer({ data, me, refresh, notify, demoLogin }) {
               </small>
             </Card>
           </div>
+          <div className="organizer-bottom">
+            <Card>
+              <div className="card-heading">
+                <div>
+                  <span className="eyebrow">КАНАЛ ЧЕРЕЗ ШКОЛЫ</span>
+                  <h2>Координаторы школ</h2>
+                </div>
+                <Badge tone="neutral">{schools.length} школ</Badge>
+              </div>
+              <p className="muted">
+                Выдайте ключ учителю — он получит кабинет своей школы, список застрявших команд и напоминания.
+                Ключ показывается один раз.
+              </p>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Школа</th>
+                      <th>Команд</th>
+                      <th>Зачётов</th>
+                      <th>Доступ</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schools.map((school) => (
+                      <tr key={school.id}>
+                        <td>
+                          <strong>{school.name}</strong>
+                          {school.is_demo && <Badge>Демо</Badge>}
+                          <small className="table-sub">
+                            {school.countryName} · <code>{school.id}</code>
+                          </small>
+                        </td>
+                        <td>{school.teams}</td>
+                        <td className="green-text">{school.verified}</td>
+                        <td>
+                          <Badge tone={school.hasCoordinatorKey ? 'green' : 'neutral'} dot>
+                            {school.hasCoordinatorKey ? 'Ключ выдан' : 'Нет ключа'}
+                          </Badge>
+                        </td>
+                        <td>
+                          <button
+                            className="btn tiny ghost"
+                            disabled={busy === school.id}
+                            onClick={() => issueKey(school)}
+                          >
+                            <KeyRound size={14} />
+                            {school.hasCoordinatorKey ? 'Перевыдать' : 'Выдать ключ'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!schools.length && (
+                <Empty
+                  title="Школ пока нет"
+                  text="Первая школа появится, когда команда создастся по коду приглашения."
+                />
+              )}
+            </Card>
+            <Card>
+              <div className="card-heading">
+                <div>
+                  <span className="eyebrow">ПОВТОРЯЕМОСТЬ</span>
+                  <h2>Сезоны спринта</h2>
+                </div>
+                <Badge tone="purple">
+                  {data.challenges.filter((c) => c.status === 'active').length} активных
+                </Badge>
+              </div>
+              <p className="muted">
+                Каждый сезон — отдельная когорта со своим кодом, рейтингом и витриной. Так школьный клуб
+                запускается снова, а не один раз.
+              </p>
+              <div className="season-list">
+                {data.challenges.map((c) => (
+                  <div key={c.id}>
+                    <span>
+                      <strong>{c.title}</strong>
+                      <small>
+                        {formatDate(c.starts_at)} → {formatDate(c.ends_at)} · <code>{c.slug}</code>
+                      </small>
+                    </span>
+                    {c.status === 'archived' ? (
+                      <Badge>Закрыт</Badge>
+                    ) : (
+                      <button
+                        className="btn tiny ghost"
+                        disabled={busy === c.id}
+                        onClick={() => archiveSeason(c.id)}
+                      >
+                        Закрыть
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={createSeason} className="season-form">
+                <Field label="Название нового сезона">
+                  <input
+                    required
+                    minLength={5}
+                    maxLength={120}
+                    value={season.title}
+                    onChange={(e) => setSeason({ ...season, title: e.target.value })}
+                    placeholder="Например: Зимний спринт школы №5"
+                  />
+                </Field>
+                <Field label="Длительность, дней">
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={season.days}
+                    onChange={(e) => setSeason({ ...season, days: e.target.value })}
+                  />
+                </Field>
+                <Button busy={busy === 'season'}>
+                  <CalendarDays size={16} />
+                  Открыть сезон
+                </Button>
+              </form>
+              <small className="muted">
+                Новый сезон становится текущим для новых команд. Прежние данные и рейтинг остаются доступны.
+              </small>
+            </Card>
+          </div>
         </>
+      )}
+      {reminder && (
+        <Modal title={`Напоминание: ${reminder.name}`} onClose={() => setReminder(null)}>
+          <p className="muted">
+            {reminder.schoolName} · причина: {reminder.reason.label}
+          </p>
+          <div className="preset-list">
+            {org.reminders.presets.map((preset) => (
+              <button key={preset} className="preset" onClick={() => setReminderText(preset)}>
+                {preset}
+              </button>
+            ))}
+          </div>
+          <form onSubmit={remind}>
+            <Field label="Текст напоминания" hint="Команда увидит его в инкубаторе и в уведомлениях.">
+              <textarea
+                required
+                rows={3}
+                minLength={5}
+                maxLength={400}
+                value={reminderText}
+                onChange={(e) => setReminderText(e.target.value)}
+              />
+            </Field>
+            <div className="modal-actions">
+              <Button variant="ghost" type="button" onClick={() => setReminder(null)}>
+                Отмена
+              </Button>
+              <Button busy={busy === 'remind'} disabled={reminderText.trim().length < 5}>
+                Отправить <Send size={15} />
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {issuedKey && (
+        <Modal title="Ключ координатора школы" onClose={() => setIssuedKey(null)}>
+          <div className="notice warning">
+            <TriangleAlert size={18} />
+            Ключ показывается один раз. Прежние сессии координатора этой школы закрыты.
+          </div>
+          <p className="muted">{issuedKey.schoolName}</p>
+          <Field label="ID школы">
+            <input readOnly value={issuedKey.schoolId} onFocus={(e) => e.target.select()} />
+          </Field>
+          <Field label="Ключ координатора">
+            <input readOnly value={issuedKey.coordinatorKey} onFocus={(e) => e.target.select()} />
+          </Field>
+          <Button
+            variant="ghost"
+            onClick={async () => {
+              const ok = await copyText(`Школа: ${issuedKey.schoolId}\nКлюч: ${issuedKey.coordinatorKey}`);
+              notify(
+                ok ? 'Скопировано. Передайте учителю приватно.' : 'Скопируйте поля вручную.',
+                ok ? 'success' : 'error',
+              );
+            }}
+          >
+            <Copy size={16} />
+            Скопировать
+          </Button>
+        </Modal>
+      )}
+      {newSeason && (
+        <Modal title="Сезон открыт" onClose={() => setNewSeason(null)}>
+          <div className="notice warning">
+            Код приглашения показывается один раз. Сохраните его и передайте школам.
+          </div>
+          <Field label="Сезон">
+            <input readOnly value={newSeason.challenge.title} />
+          </Field>
+          <Field label="Код приглашения">
+            <input readOnly value={newSeason.accessCode} onFocus={(e) => e.target.select()} />
+          </Field>
+          <Button
+            variant="ghost"
+            onClick={async () => {
+              const ok = await copyText(`${newSeason.challenge.title}\nКод: ${newSeason.accessCode}`);
+              notify(ok ? 'Код скопирован.' : 'Скопируйте поле вручную.', ok ? 'success' : 'error');
+            }}
+          >
+            <Copy size={16} />
+            Скопировать
+          </Button>
+        </Modal>
       )}
     </>
   );

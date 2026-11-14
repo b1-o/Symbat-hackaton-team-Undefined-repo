@@ -30,6 +30,7 @@ export default function Showcase({ data, navigate }) {
       setLoadError('');
       const params = new URLSearchParams({
         q: query,
+        challenge: data.challenge.id,
         limit: '24',
         ...(country !== 'all' ? { country } : {}),
         ...(category !== 'all' ? { category } : {}),
@@ -50,7 +51,7 @@ export default function Showcase({ data, navigate }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, country, category, reload]);
+  }, [query, country, category, reload, data.challenge.id]);
   async function loadMore() {
     const current = generation.current;
     setLoading(true);
@@ -58,6 +59,7 @@ export default function Showcase({ data, navigate }) {
     try {
       const params = new URLSearchParams({
         q: query,
+        challenge: data.challenge.id,
         limit: '24',
         offset: String(next),
         ...(country !== 'all' ? { country } : {}),
