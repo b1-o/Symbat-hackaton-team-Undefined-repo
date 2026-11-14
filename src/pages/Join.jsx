@@ -11,7 +11,9 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Card, Field, Modal, SectionHead } from '../components/UI';
 import { post, copyText, downloadFile } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 export default function Join({ data, refresh, navigate, notify, demoLogin }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const [login, setLogin] = useState(
     new URLSearchParams(window.location.hash.split('?')[1]).get('login') === '1',
   );
@@ -56,7 +58,7 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
         await refresh();
       }
     } catch (err) {
-      notify(err.message, 'error');
+      notify(te(err.message), 'error');
     } finally {
       setBusy(false);
     }
@@ -64,33 +66,33 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
   return (
     <>
       <SectionHead
-        eyebrow="ТВОЙ ПЕРВЫЙ ШАГ"
-        title={login ? 'С возвращением в команду' : 'Большая идея начинается с команды'}
-        text="Без сложных анкет. Только команда, школа и желание что-то изменить."
+        eyebrow={t('ТВОЙ ПЕРВЫЙ ШАГ')}
+        title={login ? t('С возвращением в команду') : t('Большая идея начинается с команды')}
+        text={t('Без сложных анкет. Только команда, школа и желание что-то изменить.')}
       />
       <div className="join-layout">
         <Card className="join-form">
           <div className="tabs">
             <button className={!login ? 'active' : ''} onClick={() => setLogin(false)}>
-              Создать команду
+              {t('Создать команду')}
             </button>
             <button className={login ? 'active' : ''} onClick={() => setLogin(true)}>
-              Войти по ключу
+              {t('Войти по ключу')}
             </button>
           </div>
           {school && !login && (
             <div className="notice">
               <School size={18} />
-              Вас пригласила школа: <strong>{school.name}</strong>
+              {t('Вас пригласила школа:')} <strong>{school.name}</strong>
             </div>
           )}
           <form onSubmit={submit} className="form-grid">
             {login ? (
               <>
                 <Field
-                  label="ID команды"
+                  label={t('ID команды')}
                   className="full-width"
-                  hint="Выдан при создании команды, начинается с team-"
+                  hint={t('Выдан при создании команды, начинается с team-')}
                 >
                   <input
                     required
@@ -98,7 +100,7 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
                     onChange={(e) => setLoginForm({ ...loginForm, teamId: e.target.value })}
                   />
                 </Field>
-                <Field label="Ключ восстановления" className="full-width">
+                <Field label={t('Ключ восстановления')} className="full-width">
                   <input
                     required
                     type="password"
@@ -112,42 +114,42 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
               <>
                 {data.challenges.length > 1 && (
                   <Field
-                    label="Сезон спринта"
+                    label={t('Сезон спринта')}
                     className="full-width"
                     hint={
                       season.isOpen
-                        ? 'Код приглашения у каждого сезона свой.'
-                        : 'Этот сезон закрыт для новых команд.'
+                        ? t('Код приглашения у каждого сезона свой.')
+                        : t('Этот сезон закрыт для новых команд.')
                     }
                   >
                     <select value={challengeId} onChange={(e) => pickSeason(e.target.value)}>
                       {data.challenges.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.title}
-                          {c.isOpen ? '' : ' · закрыт'}
+                          {c.isOpen ? '' : t(' · закрыт')}
                         </option>
                       ))}
                     </select>
                   </Field>
                 )}
-                <Field label="Код приглашения" hint="Получите код у учителя или организатора.">
+                <Field label={t('Код приглашения')} hint={t('Получите код у учителя или организатора.')}>
                   <input
                     required
                     value={form.accessCode}
                     onChange={(e) => update('accessCode', e.target.value)}
-                    placeholder="Код вашей школы"
+                    placeholder={t('Код вашей школы')}
                   />
                 </Field>
-                <Field label="Страна">
+                <Field label={t('Страна')}>
                   <select value={form.countryCode} onChange={(e) => update('countryCode', e.target.value)}>
                     {data.countries.map((c) => (
                       <option key={c.code} value={c.code}>
-                        {c.flag} {c.name}
+                        {c.flag} {loc(c, 'name')}
                       </option>
                     ))}
                   </select>
                 </Field>
-                <Field label="Школа">
+                <Field label={t('Школа')}>
                   <input
                     required
                     minLength={2}
@@ -155,7 +157,7 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
                     list="school-options"
                     value={form.schoolName}
                     onChange={(e) => update('schoolName', e.target.value)}
-                    placeholder="Название или учебный псевдоним"
+                    placeholder={t('Название или учебный псевдоним')}
                   />
                   <datalist id="school-options">
                     {data.schools
@@ -165,31 +167,31 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
                       ))}
                   </datalist>
                 </Field>
-                <Field label="Город">
+                <Field label={t('Город')}>
                   <input
                     maxLength={80}
                     value={form.city}
                     onChange={(e) => update('city', e.target.value)}
-                    placeholder="Например, Алматы"
+                    placeholder={t('Например, Алматы')}
                   />
                 </Field>
-                <Field label="Название команды">
+                <Field label={t('Название команды')}>
                   <input
                     required
                     minLength={2}
                     maxLength={80}
                     value={form.teamName}
                     onChange={(e) => update('teamName', e.target.value)}
-                    placeholder="Например, Orbit Lab"
+                    placeholder={t('Например, Orbit Lab')}
                   />
                 </Field>
-                <Field label="Nickname капитана" hint="Не указывайте настоящее имя.">
+                <Field label={t('Nickname капитана')} hint={t('Не указывайте настоящее имя.')}>
                   <input
                     required
                     maxLength={60}
                     value={form.nickname}
                     onChange={(e) => update('nickname', e.target.value)}
-                    placeholder="Ваш псевдоним"
+                    placeholder={t('Ваш псевдоним')}
                   />
                 </Field>
                 <label className="consent full-width">
@@ -200,8 +202,9 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
                     onChange={(e) => update('ageConfirmed', e.target.checked)}
                   />
                   <span>
-                    Мне 13 лет или больше. Для реального пилота получено согласие школы и законного
-                    представителя, если оно требуется.
+                    {t(
+                      'Мне 13 лет или больше. Для реального пилота получено согласие школы и законного представителя, если оно требуется.',
+                    )}
                   </span>
                 </label>
                 <label className="consent full-width">
@@ -212,31 +215,32 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
                     onChange={(e) => update('consent', e.target.checked)}
                   />
                   <span>
-                    Понимаю, что учебные заметки и подтверждённый проект доступны организатору, а название
-                    команды и проекта видны в лиге. Не буду добавлять персональные данные.
+                    {t(
+                      'Понимаю, что учебные заметки и подтверждённый проект доступны организатору, а название команды и проекта видны в лиге. Не буду добавлять персональные данные.',
+                    )}
                   </span>
                 </label>
               </>
             )}
             <Button className="full-width" busy={busy}>
-              {login ? 'Вернуться в команду' : 'Создать команду и начать'}
+              {login ? t('Вернуться в команду') : t('Создать команду и начать')}
               <ArrowRight size={17} />
             </Button>
           </form>
           {data.demoMode && (
             <div className="join-demo">
-              <span>Хочешь сначала посмотреть?</span>
+              <span>{t('Хочешь сначала посмотреть?')}</span>
               <button className="text-link" onClick={() => demoLogin('team')}>
-                Открыть демо-команду <ArrowRight size={14} />
+                {t('Открыть демо-команду')} <ArrowRight size={14} />
               </button>
             </div>
           )}
           <div className="join-demo">
             <span>
-              <School size={14} /> Вы ведёте класс?
+              <School size={14} /> {t('Вы ведёте класс?')}
             </span>
             <button className="text-link" onClick={() => navigate('/teacher')}>
-              Кабинет координатора школы <ArrowRight size={14} />
+              {t('Кабинет координатора школы')} <ArrowRight size={14} />
             </button>
           </div>
         </Card>
@@ -245,83 +249,96 @@ export default function Join({ data, refresh, navigate, notify, demoLogin }) {
             <ShieldCheck size={28} />
           </span>
           <h2>
-            Твоя идея —<br />
-            твоё пространство.
+            {t('Твоя идея —')}
+            <br />
+            {t('твоё пространство.')}
           </h2>
           <p>
-            Мы не просим настоящее имя, email или телефон. Команда получает секретный ключ для возвращения.
+            {t(
+              'Мы не просим настоящее имя, email или телефон. Команда получает секретный ключ для возвращения.',
+            )}
           </p>
           <ul>
             <li>
               <CheckCircle2 size={17} />
-              Заметки видны только вашей команде и организатору.
+              {t('Заметки видны только вашей команде и организатору.')}
             </li>
             <li>
               <CheckCircle2 size={17} />
-              AI-черновик применяется только с вашего согласия.
+              {t('AI-черновик применяется только с вашего согласия.')}
             </li>
             <li>
               <CheckCircle2 size={17} />
-              Публикация проверяется человеком.
+              {t('Публикация проверяется человеком.')}
             </li>
           </ul>
           <small>
-            Демо хранит данные в SQLite на этом сервере. Не используйте конфиденциальную информацию.
+            {t('Демо хранит данные в SQLite на этом сервере. Не используйте конфиденциальную информацию.')}
           </small>
         </div>
       </div>
       {credentials && (
         <Modal
-          title="Команда создана. Сохраните ключ!"
+          title={t('Команда создана. Сохраните ключ!')}
           onClose={() => {
             if (
               window.confirm(
-                'Ключ показывается только один раз. Вы сохранили его? Без ключа вход в команду невозможно восстановить.',
+                t(
+                  'Ключ показывается только один раз. Вы сохранили его? Без ключа вход в команду невозможно восстановить.',
+                ),
               )
             )
               navigate('/team');
           }}
         >
           <div className="notice warning">
-            Ключ показывается один раз. Без него нельзя восстановить вход.{' '}
+            {t('Ключ показывается один раз. Без него нельзя восстановить вход.')}{' '}
             {data.demoMode
-              ? 'Это демо: не используйте ключ от других сервисов.'
-              : 'Храните ключ отдельно от общего школьного компьютера.'}
+              ? t('Это демо: не используйте ключ от других сервисов.')
+              : t('Храните ключ отдельно от общего школьного компьютера.')}
           </div>
-          <Field label="ID команды">
+          <Field label={t('ID команды')}>
             <input readOnly value={credentials.teamId} onFocus={(e) => e.target.select()} />
           </Field>
-          <Field label="Ключ восстановления">
+          <Field label={t('Ключ восстановления')}>
             <input readOnly value={credentials.recoveryKey} onFocus={(e) => e.target.select()} />
           </Field>
           <div className="modal-actions">
             <Button
               variant="ghost"
               onClick={async () => {
-                const ok = await copyText(`ID: ${credentials.teamId}\nКлюч: ${credentials.recoveryKey}`);
+                const ok = await copyText(
+                  tf('ID: {id}\nКлюч: {key}', { id: credentials.teamId, key: credentials.recoveryKey }),
+                );
                 notify(
-                  ok ? 'Ключ скопирован. Храните его приватно.' : 'Скопируйте поля вручную.',
+                  ok ? t('Ключ скопирован. Храните его приватно.') : t('Скопируйте поля вручную.'),
                   ok ? 'success' : 'error',
                 );
               }}
             >
               <Copy size={16} />
-              Скопировать
+              {t('Скопировать')}
             </Button>
             <Button
               variant="ghost"
               onClick={() =>
                 downloadFile(
                   'startify-recovery.txt',
-                  `Startify Sprint — ключ восстановления\nID: ${credentials.teamId}\nКлюч: ${credentials.recoveryKey}\n\nХраните приватно. Не отправляйте в общий чат.`,
+                  tf(
+                    'Startify Sprint — ключ восстановления\nID: {id}\nКлюч: {key}\n\nХраните приватно. Не отправляйте в общий чат.',
+                    {
+                      id: credentials.teamId,
+                      key: credentials.recoveryKey,
+                    },
+                  ),
                 )
               }
             >
               <Download size={16} />
-              Сохранить ключ
+              {t('Сохранить ключ')}
             </Button>
             <Button onClick={() => navigate('/team')}>
-              К первой идее <ArrowRight size={16} />
+              {t('К первой идее')} <ArrowRight size={16} />
             </Button>
           </div>
         </Modal>

@@ -165,3 +165,25 @@ test('remote plain HTTP and invalid format are rejected at startup', () => {
     'https://example.com/v1',
   );
 });
+
+test('the mentor answers in the requested language and stays honestly labelled', () => {
+  for (let i = 1; i <= 4; i++) {
+    for (const mode of ['guide', 'review', 'draft', 'pitch']) {
+      const ru = templateReply(i, mode);
+      const en = templateReply(i, mode, 'en');
+      const { source, model, ...content } = en;
+      assert.equal(mentorReplySchema.safeParse(content).success, true, `English ${mode} breaks the schema`);
+      assert.equal(source, 'template', 'a template must never claim to be a model answer');
+      assert.equal(model, null);
+      for (const field of ['reply', 'draft', 'nextQuestion']) {
+        assert.ok(!/[А-Яа-яЁё]/.test(en[field]), `English ${mode} ${field} still contains Russian`);
+      }
+      assert.ok(
+        en.suggestions.every((s) => !/[А-Яа-яЁё]/.test(s)),
+        `English ${mode} suggestions are Russian`,
+      );
+      assert.ok(/[А-Яа-яЁё]/.test(ru.reply), 'Russian must stay the default language');
+    }
+  }
+  assert.equal(templateReply(1, 'guide', 'kk').reply, templateReply(1, 'guide').reply);
+});

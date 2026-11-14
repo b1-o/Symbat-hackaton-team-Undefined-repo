@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { X, Check, LoaderCircle, ArrowUpRight, Inbox } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 export function Badge({ children, tone = 'neutral', dot = false }) {
   return (
@@ -17,7 +18,9 @@ export function Button({ children, variant = 'primary', busy, className = '', di
     </button>
   );
 }
-export function Progress({ value, label = 'Прогресс', tone = '' }) {
+export function Progress({ value, label, tone = '' }) {
+  const { t } = useI18n();
+  label = label ?? t('Прогресс');
   return (
     <div
       className={`progress ${tone}`}
@@ -63,12 +66,13 @@ export function Empty({ title, text, children }) {
   );
 }
 export function Status({ submission }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const map = {
-    pending: ['amber', 'На проверке'],
-    approved: ['green', 'Подтверждён'],
-    returned: ['red', 'Нужна доработка'],
+    pending: ['amber', t('На проверке')],
+    approved: ['green', t('Подтверждён')],
+    returned: ['red', t('Нужна доработка')],
   };
-  const [tone, label] = map[submission?.status] || ['neutral', 'Черновик'];
+  const [tone, label] = map[submission?.status] || ['neutral', t('Черновик')];
   return (
     <Badge tone={tone} dot>
       {label}
@@ -85,6 +89,7 @@ export function Field({ label, hint, children, className = '', ...props }) {
   );
 }
 export function Modal({ title, children, onClose, wide = false }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const ref = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -133,7 +138,7 @@ export function Modal({ title, children, onClose, wide = false }) {
       >
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="icon-btn" aria-label="Закрыть" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('Закрыть')} onClick={onClose}>
             <X size={20} />
           </button>
         </div>

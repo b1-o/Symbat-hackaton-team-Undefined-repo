@@ -5,6 +5,26 @@ import Teacher from '../../src/pages/Teacher.jsx';
 import Organizer from '../../src/pages/Organizer.jsx';
 import Incubator from '../../src/pages/Incubator.jsx';
 import Strategy from '../../src/pages/Strategy.jsx';
+import Dashboard from '../../src/pages/Dashboard.jsx';
+import Join from '../../src/pages/Join.jsx';
+import League from '../../src/pages/League.jsx';
+import Showcase from '../../src/pages/Showcase.jsx';
+import { I18nProvider, useI18n } from '../../src/lib/i18n.jsx';
+
+// Flips the real provider, exactly like the RU/EN buttons in the header.
+function SetLanguage({ code }) {
+  const { setLang } = useI18n();
+  React.useEffect(() => {
+    setLang(code);
+  }, [code]);
+  return null;
+}
+const inEnglish = (element) => (
+  <I18nProvider>
+    <SetLanguage code="en" />
+    {element}
+  </I18nProvider>
+);
 
 const iso = new Date().toISOString();
 const steps = [1, 2, 3, 4, 5].map((i) => ({
@@ -15,6 +35,13 @@ const steps = [1, 2, 3, 4, 5].map((i) => ({
   prompt: 'Вопрос наставника',
   example: 'Пример',
   icon: 'lightbulb',
+  en: {
+    title: `Stage ${i}`,
+    short: 'Step',
+    description: 'Description',
+    prompt: 'Mentor question',
+    example: 'Example',
+  },
   completed: i < 3,
   content: 'Сохранённые заметки',
   updatedAt: iso,
@@ -32,7 +59,7 @@ const bootstrap = {
   demoMode: true,
   inviteHint: 'SPRINT-2026',
   llm: { enabled: false, model: null },
-  countries: [{ code: 'KZ', flag: '🇰🇿', name: 'Казахстан' }],
+  countries: [{ code: 'KZ', flag: '🇰', name: 'Казахстан', en: { name: 'Kazakhstan' } }],
   categories: ['EdTech'],
   steps,
   challenge,
@@ -220,6 +247,7 @@ export async function run() {
   };
   const noop = () => {};
   const ctx = { data: bootstrap, refresh: async () => {}, navigate: noop, notify: noop, demoLogin: noop };
+  const mounted = [];
   async function mount(name, element) {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -233,6 +261,7 @@ export async function run() {
     const text = host.textContent;
     assert.ok(text.length > 200, `${name}: nothing rendered`);
     assert.ok(!text.includes('Загружаем кабинет'), `${name}: stuck on loading`);
+    mounted.push(root);
     return { host, text, root };
   }
 
@@ -385,5 +414,57 @@ export async function run() {
     calls.some((c) => c.url.includes('/api/team/reminders/r1/read')),
     'read receipt was not sent',
   );
+
+  // --- English student journey -------------------------------------------
+  const enTeam = await mount('incubator (EN)', inEnglish(<Incubator {...ctx} me={{ role: 'team', team }} />));
+  for (const expected of ['STAGE 0', 'Stage 3', 'Team notebook', 'Challenge another school']) {
+    assert.ok(enTeam.text.includes(expected), `English incubator missing "${expected}"`);
+  }
+  assert.ok(
+    enTeam.text.includes(`${team.steps.filter((s) => s.completed).length} of 5 stages`),
+    'English progress line was not interpolated',
+  );
+  assert.equal(document.documentElement.lang, 'en', 'html lang was not updated for screen readers');
+  // Pupil-generated content stays as written: we translate chrome, not user data.
+  assert.ok(
+    enTeam.text.includes('Проверьте этап интервью'),
+    'a reminder written in Russian must not be machine-translated',
+  );
+  const enPublication = [...enTeam.host.querySelectorAll('.workspace-tabs button')].find((b) =>
+    b.textContent.includes('Stage 5'),
+  );
+  assert.ok(enPublication, 'English publication tab is missing');
+  await act(async () => {
+    enPublication.click();
+  });
+  assert.ok(
+    enTeam.host.textContent.includes('SS-EDUQ2345'),
+    'ownership code must survive the language switch',
+  );
+
+  const enJoin = await mount('join (EN)', inEnglish(<Join {...ctx} me={{ role: 'guest' }} />));
+  for (const expected of ['Team name', 'Invite code', 'Kazakhstan', "Captain's nickname"]) {
+    assert.ok(enJoin.text.includes(expected), `English sign-up missing "${expected}"`);
+  }
+  const enDash = await mount('dashboard (EN)', inEnglish(<Dashboard {...ctx} me={{ role: 'team', team }} />));
+  assert.ok(enDash.text.includes('Welcome back, EduQuest'), 'English dashboard heading is missing');
+  const enLeague = await mount('league (EN)', inEnglish(<League {...ctx} me={{ role: 'team', team }} />));
+  assert.ok(enLeague.text.includes('SCHOOL LEAGUE'), 'English league heading is missing');
+  const enShowcase = await mount('showcase (EN)', inEnglish(<Showcase {...ctx} me={{ role: 'guest' }} />));
+  assert.ok(enShowcase.text.includes('STARTUP SHOWCASE'), 'English showcase heading is missing');
+
+  // Russian remains the default and must be untouched by the English pass.
+  const ruAgain = await mount(
+    'incubator (RU default)',
+    <I18nProvider>
+      <Incubator {...ctx} me={{ role: 'team', team }} />
+    </I18nProvider>,
+  );
+  assert.ok(ruAgain.text.includes('Заметки команды'), 'Russian default regressed');
+
+  // Unmount before the jsdom globals are restored, so no timer touches a dead window.
+  await act(async () => {
+    for (const root of mounted) root.unmount();
+  });
   return calls.length;
 }

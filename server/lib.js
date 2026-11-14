@@ -1,9 +1,9 @@
 export const COUNTRIES = [
-  { code: 'KZ', flag: '🇰🇿', name: 'Казахстан' },
-  { code: 'UZ', flag: '🇺🇿', name: 'Узбекистан' },
-  { code: 'KG', flag: '🇰🇬', name: 'Кыргызстан' },
-  { code: 'AZ', flag: '🇦🇿', name: 'Азербайджан' },
-  { code: 'GE', flag: '🇬🇪', name: 'Грузия' },
+  { code: 'KZ', flag: '🇰🇿', name: 'Казахстан', en: { name: 'Kazakhstan' } },
+  { code: 'UZ', flag: '🇺🇿', name: 'Узбекистан', en: { name: 'Uzbekistan' } },
+  { code: 'KG', flag: '🇰🇬', name: 'Кыргызстан', en: { name: 'Kyrgyzstan' } },
+  { code: 'AZ', flag: '🇦🇿', name: 'Азербайджан', en: { name: 'Azerbaijan' } },
+  { code: 'GE', flag: '🇬🇪', name: 'Грузия', en: { name: 'Georgia' } },
 ];
 export const STEPS = [
   {
@@ -15,6 +15,13 @@ export const STEPS = [
       'Какую конкретную проблему я заметил? Кто с ней сталкивается? Почему существующий способ неудобен?',
     example: 'Проблема → конкретный пользователь → ситуация → почему это важно',
     icon: 'lightbulb',
+    en: {
+      title: 'Idea and user',
+      short: 'Find a problem',
+      description: 'Pick a problem you know and describe who you are solving it for.',
+      prompt: 'What exact problem did I notice? Who faces it? Why is the current way inconvenient?',
+      example: 'Problem → specific user → situation → why it matters',
+    },
   },
   {
     index: 2,
@@ -25,6 +32,13 @@ export const STEPS = [
     prompt: 'Кого мы спросили? Что узнали? Какой вывод изменил нашу идею?',
     example: '3 обезличенных интервью → наблюдения → вывод → следующая проверка',
     icon: 'messages',
+    en: {
+      title: 'Validate the problem',
+      short: 'Talk to people',
+      description: 'Run at least three short interviews. Record questions and answers without personal data.',
+      prompt: 'Who did we ask? What did we learn? Which insight changed our idea?',
+      example: '3 anonymised interviews → observations → conclusion → next check',
+    },
   },
   {
     index: 3,
@@ -34,6 +48,15 @@ export const STEPS = [
     prompt: 'Что делает MVP? Какую одну задачу решает? Кто пользователь и кто клиент? Какие расходы?',
     example: 'MVP → ценность → альтернативы → модель доходов → расходы',
     icon: 'blocks',
+    en: {
+      title: 'Solution and business model',
+      short: 'Build the solution',
+      description:
+        'Describe the minimum version of the product, how it differs from alternatives and who pays.',
+      prompt:
+        'What does the MVP do? Which single task does it solve? Who is the user and who is the customer? What are the costs?',
+      example: 'MVP → value → alternatives → revenue model → costs',
+    },
   },
   {
     index: 4,
@@ -43,6 +66,14 @@ export const STEPS = [
     prompt: 'Как объяснить проект за 60 секунд? Какие факты подтверждены, а какие пока гипотезы?',
     example: 'Крючок → проблема → решение → доказательства → команда → запрос',
     icon: 'presentation',
+    en: {
+      title: 'Pitch and materials',
+      short: 'Prepare the pitch',
+      description: 'Build a clear pitch: problem, solution, evidence and the next step.',
+      prompt:
+        'How do we explain the project in 60 seconds? Which facts are confirmed and which are still hypotheses?',
+      example: 'Hook → problem → solution → evidence → team → ask',
+    },
   },
   {
     index: 5,
@@ -54,6 +85,15 @@ export const STEPS = [
       'Проверьте название, описание и отсутствие личных данных. Скопируйте ссылку на опубликованный паспорт.',
     example: 'Паспорт проекта → проверка организатором → витрина → рейтинг школы',
     icon: 'rocket',
+    en: {
+      title: 'Publication on AI Startify',
+      short: 'Show the world',
+      description:
+        'Publish the passport on AI Startify and submit the link. Verification comes only after a manual review.',
+      prompt:
+        'Check the title, description and absence of personal data. Copy the link to the published passport.',
+      example: 'Project passport → organiser review → showcase → school ranking',
+    },
   },
 ];
 export const CATEGORIES = ['EdTech', 'ClimateTech', 'Social Impact', 'AI & Tools', 'Другое'];

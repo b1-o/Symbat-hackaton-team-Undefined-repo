@@ -40,7 +40,10 @@ export function downloadFile(name, content, type = 'text/plain;charset=utf-8') {
 export function inviteLink(schoolId = '') {
   return `${window.location.origin}${window.location.pathname}${schoolId ? `?from=${encodeURIComponent(schoolId)}` : ''}#/join`;
 }
-export function formatDate(value) {
-  return value ? new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '—';
+export const localeFor = (lang) => (lang === 'en' ? 'en-GB' : 'ru-RU');
+export function formatDate(value, lang = 'ru') {
+  return value
+    ? new Date(value).toLocaleDateString(localeFor(lang), { day: 'numeric', month: 'short' })
+    : '—';
 }
-export const number = (value) => new Intl.NumberFormat('ru-RU').format(value || 0);
+export const number = (value, lang = 'ru') => new Intl.NumberFormat(localeFor(lang)).format(value || 0);

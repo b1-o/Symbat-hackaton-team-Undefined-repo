@@ -13,38 +13,44 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Card, Empty, Modal, SectionHead } from '../components/UI';
 import { copyText, inviteLink } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 export default function League({ data, me, navigate, notify }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const [tab, setTab] = useState('schools'),
     [country, setCountry] = useState('all'),
     [invite, setInvite] = useState(null);
   const rows = data.leaderboard.schools.filter((s) => country === 'all' || s.country_code === country);
   async function challenge(schoolId) {
     const link = inviteLink(schoolId);
-    if (await copyText(link)) notify('Ссылка-вызов скопирована. Отправьте её другой школе.');
+    if (await copyText(link)) notify(t('Ссылка-вызов скопирована. Отправьте её другой школе.'));
     else setInvite(link);
   }
   return (
     <>
       <SectionHead
-        eyebrow="ШКОЛЬНАЯ ЛИГА · СЕЗОН 2026"
-        title="Твоя школа. Твоя команда. Ваш момент."
-        text="Семь дней, чтобы решить знакомую проблему. В рейтинге считаются подтверждённые проекты, а не регистрации."
+        eyebrow={t('ШКОЛЬНАЯ ЛИГА · СЕЗОН 2026')}
+        title={t('Твоя школа. Твоя команда. Ваш момент.')}
+        text={t(
+          'Семь дней, чтобы решить знакомую проблему. В рейтинге считаются подтверждённые проекты, а не регистрации.',
+        )}
       >
         <Button onClick={() => navigate(me.role === 'team' ? '/team' : '/join')}>
-          {me.role === 'team' ? 'Моя команда' : 'Вступить в лигу'}
+          {me.role === 'team' ? t('Моя команда') : t('Вступить в лигу')}
           <ArrowRight size={16} />
         </Button>
       </SectionHead>
       <div className="league-banner">
         <div>
-          <Badge tone="lime">ГЛАВНЫЙ ЧЕЛЛЕНДЖ</Badge>
+          <Badge tone="lime">{t('ГЛАВНЫЙ ЧЕЛЛЕНДЖ')}</Badge>
           <h2>
-            Проблема моей школы →<br />
-            стартап за 7 дней
+            {t('Проблема моей школы →')}
+            <br />
+            {t('стартап за 7 дней')}
           </h2>
           <p>
-            Пригласи школу-соперника. Обе школы получат больше идей,
-            <br />а лучшие команды — обратную связь и портфолио.
+            {t('Пригласи школу-соперника. Обе школы получат больше идей,')}
+            <br />
+            {t('а лучшие команды — обратную связь и портфолио.')}
           </p>
         </div>
         <div className="league-trophy">
@@ -52,24 +58,24 @@ export default function League({ data, me, navigate, notify }) {
         </div>
         <div className="league-rules">
           <span>
-            <Users size={18} /> 1–4 участника
+            <Users size={18} /> {t('1–4 участника')}
           </span>
           <span>
-            <Globe2 size={18} /> 5 стран пилота
+            <Globe2 size={18} /> {t('5 стран пилота')}
           </span>
           <span>
-            <ShieldCheck size={18} /> Ручная проверка
+            <ShieldCheck size={18} /> {t('Ручная проверка')}
           </span>
         </div>
       </div>
       <div className="league-mechanics">
         {[
-          [Link2, '01', 'Соберите команду', 'Код школы, nickname и одна проблема.'],
-          [CheckCircle2, '02', 'Пройдите 5 этапов', 'Заметки, интервью, решение и питч.'],
-          [Gift, '03', 'Получите признание', 'Публикация, портфолио и место школы в лиге.'],
+          [Link2, '01', t('Соберите команду'), t('Код школы, nickname и одна проблема.')],
+          [CheckCircle2, '02', t('Пройдите 5 этапов'), t('Заметки, интервью, решение и питч.')],
+          [Gift, '03', t('Получите признание'), t('Публикация, портфолио и место школы в лиге.')],
         ].map(([Icon, n, title, text]) => (
           <Card key={n}>
-            <span className="eyebrow">ШАГ {n}</span>
+            <span className="eyebrow">{tf('ШАГ {n}', { n })}</span>
             <Icon size={24} />
             <h3>{title}</h3>
             <p>{text}</p>
@@ -77,20 +83,24 @@ export default function League({ data, me, navigate, notify }) {
         ))}
       </div>
       <div className="section-title">
-        <h2>Рейтинг честных результатов</h2>
-        <select aria-label="Страна рейтинга" value={country} onChange={(e) => setCountry(e.target.value)}>
-          <option value="all">Все страны</option>
+        <h2>{t('Рейтинг честных результатов')}</h2>
+        <select
+          aria-label={t('Страна рейтинга')}
+          value={country}
+          onChange={(e) => setCountry(e.target.value)}
+        >
+          <option value="all">{t('Все страны')}</option>
           {data.countries.map((c) => (
             <option key={c.code} value={c.code}>
-              {c.flag} {c.name}
+              {c.flag} {loc(c, 'name')}
             </option>
           ))}
         </select>
       </div>
       <div className="tabs" role="tablist">
         {[
-          ['schools', 'Школы', School],
-          ['countries', 'Страны', Globe2],
+          ['schools', t('Школы'), School],
+          ['countries', t('Страны'), Globe2],
         ].map(([key, label, Icon]) => (
           <button
             key={key}
@@ -109,12 +119,12 @@ export default function League({ data, me, navigate, notify }) {
           <table>
             <thead>
               <tr>
-                <th>Место</th>
-                <th>{tab === 'schools' ? 'Школа' : 'Страна'}</th>
-                <th>{tab === 'schools' ? 'Страна' : 'Школы'}</th>
-                <th>Команды</th>
-                <th>Подтверждено</th>
-                <th>Вызов</th>
+                <th>{t('Место')}</th>
+                <th>{tab === 'schools' ? t('Школа') : t('Страна')}</th>
+                <th>{tab === 'schools' ? t('Страна') : t('Школы')}</th>
+                <th>{t('Команды')}</th>
+                <th>{t('Подтверждено')}</th>
+                <th>{t('Вызов')}</th>
               </tr>
             </thead>
             <tbody>
@@ -124,9 +134,9 @@ export default function League({ data, me, navigate, notify }) {
                     <span className={`rank rank-${i}`}>{i === 0 ? <Trophy size={15} /> : i + 1}</span>
                   </td>
                   <td>
-                    <strong>{row.name || `${row.flag} ${row.countryName}`}</strong>
-                    {row.isDemo && <Badge>Демо</Badge>}
-                    <small className="table-sub">{row.city || 'Международный пилот'}</small>
+                    <strong>{row.name || `${row.flag} ${t(row.countryName)}`}</strong>
+                    {row.isDemo && <Badge>{t('Демо')}</Badge>}
+                    <small className="table-sub">{row.city || t('Международный пилот')}</small>
                   </td>
                   <td>{row.countryName || row.schools}</td>
                   <td>{row.teams}</td>
@@ -137,7 +147,7 @@ export default function League({ data, me, navigate, notify }) {
                     {tab === 'schools' ? (
                       <button className="btn tiny ghost" onClick={() => challenge(row.id)}>
                         <Copy size={14} />
-                        Вызов
+                        {t('Вызов')}
                       </button>
                     ) : (
                       <span className="muted">—</span>
@@ -150,18 +160,20 @@ export default function League({ data, me, navigate, notify }) {
         </div>
         {!rows.length && tab === 'schools' && (
           <Empty
-            title="Эта страна ещё не на орбите"
-            text="Пригласите первую школу — и откройте новый сезон."
+            title={t('Эта страна ещё не на орбите')}
+            text={t('Пригласите первую школу — и откройте новый сезон.')}
           />
         )}
       </Card>
       <div className="notice">
-        <ShieldCheck size={18} /> Один паспорт = один зачёт. Повторная отправка тем же или другим составом не
-        увеличивает рейтинг. Атрибуция приглашения сохраняется при создании приглашённой команды.
+        <ShieldCheck size={18} />
+        {t(
+          'Один паспорт = один зачёт. Повторная отправка тем же или другим составом не увеличивает рейтинг. Атрибуция приглашения сохраняется при создании приглашённой команды.',
+        )}
       </div>
       {invite && (
-        <Modal title="Ссылка-вызов" onClose={() => setInvite(null)}>
-          <p>Скопируйте ссылку вручную:</p>
+        <Modal title={t('Ссылка-вызов')} onClose={() => setInvite(null)}>
+          <p>{t('Скопируйте ссылку вручную:')}</p>
           <input readOnly value={invite} onFocus={(e) => e.target.select()} />
         </Modal>
       )}

@@ -19,8 +19,10 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Card, Progress } from '../components/UI';
 import { number, formatDate } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 
 export function ProjectCard({ project, navigate }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const tones = { ClimateTech: 'green', EdTech: 'purple', 'Social Impact': 'orange', 'AI & Tools': 'blue' };
   const Icon =
     { ClimateTech: Globe2, EdTech: Lightbulb, 'Social Impact': Users, 'AI & Tools': Sparkles }[
@@ -37,7 +39,7 @@ export function ProjectCard({ project, navigate }) {
         <span className="art-dot one" />
         <span className="art-dot two" />
         <Badge>{project.category}</Badge>
-        {project.is_demo && <span className="demo-tag">Демо</span>}
+        {project.is_demo && <span className="demo-tag">{t('Демо')}</span>}
       </div>
       <div className="project-body">
         <h3>
@@ -49,9 +51,9 @@ export function ProjectCard({ project, navigate }) {
           <span className="tiny-avatar">{project.team_name.slice(0, 2)}</span>
           <span>
             {project.team_name}
-            <small>{project.countryName}</small>
+            <small>{t(project.countryName)}</small>
           </span>
-          <span className="verified-dot" title="Подтверждён организатором">
+          <span className="verified-dot" title={t('Подтверждён организатором')}>
             <Check size={12} />
           </span>
         </div>
@@ -60,6 +62,7 @@ export function ProjectCard({ project, navigate }) {
   );
 }
 export default function Dashboard({ data, me, navigate }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const team = me.role === 'team' ? me.team : null;
   const completed = team?.steps.filter((s) => s.completed).length || 0;
   const days = Math.max(0, Math.ceil((new Date(data.challenge.ends_at) - Date.now()) / 86400000));
@@ -68,15 +71,15 @@ export default function Dashboard({ data, me, navigate }) {
     <>
       <div className="welcome-line">
         <div>
-          <span className="eyebrow">МАЛЕНЬКИЕ ШАГИ. БОЛЬШИЕ СТАРТАПЫ.</span>
+          <span className="eyebrow">{t('МАЛЕНЬКИЕ ШАГИ. БОЛЬШИЕ СТАРТАПЫ.')}</span>
           <h1>
-            {team ? `С возвращением, ${team.name}` : 'Твоя идея заслуживает старта'}
+            {team ? tf('С возвращением, {name}', { name: team.name }) : t('Твоя идея заслуживает старта')}
             <span className="heading-dot">.</span>
           </h1>
-          <p>Место, где школьная проблема превращается в настоящий проект.</p>
+          <p>{t('Место, где школьная проблема превращается в настоящий проект.')}</p>
         </div>
         <Badge tone="green" dot>
-          Сезон 2026 открыт
+          {t('Сезон 2026 открыт')}
         </Badge>
       </div>
       <section className="hero-grid">
@@ -86,39 +89,39 @@ export default function Dashboard({ data, me, navigate }) {
               <Sparkles size={14} /> AI STARTIFY × SCHOOL SPRINT
             </span>
             <h2>
-              Не просто идея.
+              {t('Не просто идея.')}
               <br />
-              Твой первый
+              {t('Твой первый')}
               <br />
-              <span>стартап.</span>
+              <span>{t('стартап.')}</span>
             </h2>
             <p>
-              Пройди путь от «а что, если…» до проекта,
-              <br className="desktop-break" /> который увидит мир. По одному шагу в день.
+              {t('Пройди путь от «а что, если…» до проекта,')}
+              <br className="desktop-break" /> {t('который увидит мир. По одному шагу в день.')}
             </p>
             <div className="hero-actions">
               <Button variant="lime" onClick={() => navigate(team ? '/team' : '/join')}>
-                {team ? 'Продолжить свой путь' : 'Начать свой стартап'}
+                {team ? t('Продолжить свой путь') : t('Начать свой стартап')}
                 <ArrowRight size={17} />
               </Button>
               <button className="hero-secondary" onClick={() => navigate('/challenge')}>
-                Как это работает <ArrowUpRight size={15} />
+                {t('Как это работает')} <ArrowUpRight size={15} />
               </button>
             </div>
             <div className="hero-proof">
               <span className="proof-icon">
                 <Check size={12} />
               </span>{' '}
-              Бесплатный старт <i /> Наставник на каждом этапе
+              {t('Бесплатный старт')} <i /> {t('Наставник на каждом этапе')}
             </div>
           </div>
           <div className="hero-visual">
             <img
               src="/images/startup-orbit.png"
-              alt="Белая ракета с лаймовыми деталями на орбите вокруг школы стартапов"
+              alt={t('Белая ракета с лаймовыми деталями на орбите вокруг школы стартапов')}
             />
             <span className="floating-tag">
-              <Sparkles size={14} /> Из идеи — в орбиту
+              <Sparkles size={14} /> {t('Из идеи — в орбиту')}
             </span>
           </div>
         </div>
@@ -130,20 +133,22 @@ export default function Dashboard({ data, me, navigate }) {
             <Badge tone="lime">7-DAY CHALLENGE</Badge>
           </div>
           <h2>
-            Одна неделя.
+            {t('Одна неделя.')}
             <br />
-            Первый запуск.
+            {t('Первый запуск.')}
           </h2>
           <p>
-            От проблемы твоей школы —<br />к опубликованному проекту.
+            {t('От проблемы твоей школы —')}
+            <br />
+            {t('к опубликованному проекту.')}
           </p>
           <div className="sprint-time">
             <Clock3 size={16} />
-            <span>До конца спринта</span>
-            <strong>{days} дней</strong>
+            <span>{t('До конца спринта')}</span>
+            <strong>{tf('{days} дней', { days })}</strong>
           </div>
           <div className="mini-journey">
-            {['Идея', 'Проверка', 'MVP', 'Питч', 'Публикация'].map((s, i) => (
+            {[t('Идея'), t('Проверка'), 'MVP', t('Питч'), t('Публикация')].map((s, i) => (
               <div key={s} className={team?.steps[i]?.completed ? 'done' : ''}>
                 <span>{team?.steps[i]?.completed ? <Check size={11} /> : i + 1}</span>
                 <small>{s}</small>
@@ -153,21 +158,27 @@ export default function Dashboard({ data, me, navigate }) {
           <div className="sprint-reward">
             <Trophy size={23} />
             <div>
-              <strong>Не только проект. Твой рост.</strong>
-              <small>Опыт, портфолио и место в лиге школ</small>
+              <strong>{t('Не только проект. Твой рост.')}</strong>
+              <small>{t('Опыт, портфолио и место в лиге школ')}</small>
             </div>
           </div>
           <Button variant="dark" className="full" onClick={() => navigate('/challenge')}>
-            Войти в школьную лигу <ArrowRight size={16} />
+            {t('Войти в школьную лигу')} <ArrowRight size={16} />
           </Button>
         </Card>
       </section>
       <section className="stats-grid">
         {[
-          [Users, data.stats.teams, 'Команд в спринте', 'Вместе создавать проще', 'purple'],
-          [School, data.stats.schools, 'Школы-участники', 'Идей больше, когда мы вместе', 'orange'],
-          [Globe2, data.stats.countries, 'Страны в лиге', 'Границы только на карте', 'blue'],
-          [Rocket, data.stats.verified, 'Подтверждённых проекта', 'Настоящий результат, не клики', 'green'],
+          [Users, data.stats.teams, t('Команд в спринте'), t('Вместе создавать проще'), 'purple'],
+          [School, data.stats.schools, t('Школы-участники'), t('Идей больше, когда мы вместе'), 'orange'],
+          [Globe2, data.stats.countries, t('Страны в лиге'), t('Границы только на карте'), 'blue'],
+          [
+            Rocket,
+            data.stats.verified,
+            t('Подтверждённых проекта'),
+            t('Настоящий результат, не клики'),
+            'green',
+          ],
         ].map(([Icon, value, label, sub, tone]) => (
           <Card className="stat" key={label}>
             <div>
@@ -185,12 +196,14 @@ export default function Dashboard({ data, me, navigate }) {
         <Card className="journey-card">
           <div className="card-heading">
             <div>
-              <span className="eyebrow">ТВОЙ МАРШРУТ</span>
-              <h2>Большой путь начинается здесь</h2>
+              <span className="eyebrow">{t('ТВОЙ МАРШРУТ')}</span>
+              <h2>{t('Большой путь начинается здесь')}</h2>
             </div>
-            <Badge tone="purple">{completed} / 5 этапов</Badge>
+            <Badge tone="purple">{tf('{done} / 5 этапов', { done: completed })}</Badge>
           </div>
-          <p className="muted">Никакого «придумай миллиардный бизнес». Просто следующий понятный шаг.</p>
+          <p className="muted">
+            {t('Никакого «придумай миллиардный бизнес». Просто следующий понятный шаг.')}
+          </p>
           <div className="journey-steps">
             {data.steps.map((step, i) => {
               const Icon = icons[i];
@@ -203,8 +216,8 @@ export default function Dashboard({ data, me, navigate }) {
                   <span className="journey-icon">
                     {team?.steps[i].completed ? <Check size={21} /> : <Icon size={21} />}
                   </span>
-                  <strong>{step.short}</strong>
-                  <small>Этап 0{step.index}</small>
+                  <strong>{loc(step, 'short')}</strong>
+                  <small>{tf('Этап 0{index}', { index: step.index })}</small>
                 </button>
               );
             })}
@@ -213,59 +226,59 @@ export default function Dashboard({ data, me, navigate }) {
             <span>
               <Compass size={17} />
               {team
-                ? `Следующий шаг: ${data.steps[team.nextStep - 1].title}`
-                : 'Твоя идея не должна быть идеальной, чтобы начать.'}
+                ? tf('Следующий шаг: {title}', { title: loc(data.steps[team.nextStep - 1], 'title') })
+                : t('Твоя идея не должна быть идеальной, чтобы начать.')}
             </span>
             <button className="text-link" onClick={() => navigate(team ? '/team' : '/join')}>
-              В инкубатор <ArrowRight size={15} />
+              {t('В инкубатор')} <ArrowRight size={15} />
             </button>
           </div>
         </Card>
         <Card className="leader-card">
           <div className="card-heading">
             <h2>
-              <Trophy size={19} /> На орбите лиги
+              <Trophy size={19} /> {t('На орбите лиги')}
             </h2>
             <button
               className="icon-btn"
-              aria-label="Вся школьная лига"
+              aria-label={t('Вся школьная лига')}
               onClick={() => navigate('/challenge')}
             >
               <ArrowUpRight size={18} />
             </button>
           </div>
-          <p className="muted">Школы, которые уже зажигают идеи</p>
+          <p className="muted">{t('Школы, которые уже зажигают идеи')}</p>
           {data.leaderboard.schools.slice(0, 3).map((school, i) => (
             <div className="leader-row" key={school.id}>
               <span className={`leader-rank rank-${i}`}>{i === 0 ? <Trophy size={15} /> : `0${i + 1}`}</span>
               <span className={`school-avatar avatar-${i}`}>
-                {school.name.replace('Демо-', '').slice(0, 1)}
+                {school.name.replace(t('Демо-'), '').slice(0, 1)}
               </span>
               <div>
                 <strong>{school.name}</strong>
                 <small>
-                  {school.city} · {school.countryName}
+                  {school.city} · {t(school.countryName)}
                 </small>
               </div>
               <b>
                 {school.verified}
-                <small>проект.</small>
+                <small>{t('проект.')}</small>
               </b>
             </div>
           ))}
           <button className="leader-all" onClick={() => navigate('/challenge')}>
-            Посмотреть весь рейтинг <ArrowRight size={15} />
+            {t('Посмотреть весь рейтинг')} <ArrowRight size={15} />
           </button>
         </Card>
       </section>
       <section className="showcase-section">
         <div className="section-title">
           <div>
-            <span className="eyebrow">СОЗДАНО ШКОЛЬНИКАМИ</span>
-            <h2>Маленькие команды. Заметные идеи.</h2>
+            <span className="eyebrow">{t('СОЗДАНО ШКОЛЬНИКАМИ')}</span>
+            <h2>{t('Маленькие команды. Заметные идеи.')}</h2>
           </div>
           <button className="text-link" onClick={() => navigate('/showcase')}>
-            Все проекты <ArrowRight size={16} />
+            {t('Все проекты')} <ArrowRight size={16} />
           </button>
         </div>
         <div className="project-grid">
@@ -274,7 +287,7 @@ export default function Dashboard({ data, me, navigate }) {
           ))}
           {data.projects.length === 0 && (
             <Card className="full">
-              <p>Здесь появятся первые подтверждённые проекты. Станьте первой командой!</p>
+              <p>{t('Здесь появятся первые подтверждённые проекты. Станьте первой командой!')}</p>
             </Card>
           )}
         </div>
@@ -285,16 +298,20 @@ export default function Dashboard({ data, me, navigate }) {
         </span>
         <div>
           <Badge tone="lime">GLOBAL GROWTH CHALLENGE</Badge>
-          <h2>10 000 стартапов — это система, не случайность.</h2>
-          <p>Исследование, воронка активации и план международного роста. Все допущения открыты.</p>
+          <h2>{t('10 000 стартапов — это система, не случайность.')}</h2>
+          <p>{t('Исследование, воронка активации и план международного роста. Все допущения открыты.')}</p>
         </div>
         <Button variant="ghost" onClick={() => navigate('/strategy')}>
-          Открыть стратегию <ArrowUpRight size={17} />
+          {t('Открыть стратегию')} <ArrowUpRight size={17} />
         </Button>
       </section>
       <div className="dashboard-note">
-        Учебные примеры помечены «Демо». Зачёт проверяется человеком. Последнее обновление данных:{' '}
-        {formatDate(new Date().toISOString())}.
+        {tf(
+          'Учебные примеры помечены «Демо». Зачёт проверяется человеком. Последнее обновление данных: {date}',
+          {
+            date: formatDate(new Date().toISOString(), lang),
+          },
+        )}
       </div>
     </>
   );

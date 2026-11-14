@@ -26,36 +26,40 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Card, Field, Modal, Progress, SectionHead, Status } from '../components/UI';
 import { api, patch, post, copyText, downloadFile, inviteLink } from '../lib/api';
+import { useI18n } from '../lib/i18n';
 
 export default function Incubator({ data, me, refresh, navigate, notify, demoLogin }) {
+  const { t, tf, te, lang, loc } = useI18n();
   if (me.role !== 'team')
     return (
       <>
         <SectionHead
-          eyebrow="ЛИЧНОЕ РАБОЧЕЕ ПРОСТРАНСТВО"
-          title="Место для твоей большой идеи"
-          text="Заметки, наставник и понятный путь до публикации — в одном пространстве."
+          eyebrow={t('ЛИЧНОЕ РАБОЧЕЕ ПРОСТРАНСТВО')}
+          title={t('Место для твоей большой идеи')}
+          text={t('Заметки, наставник и понятный путь до публикации — в одном пространстве.')}
         />
         <div className="empty-workspace">
-          <img src="/images/startup-orbit.png" alt="Ракета — символ первого стартапа" />
+          <img src="/images/startup-orbit.png" alt={t('Ракета — символ первого стартапа')} />
           <div>
-            <Badge tone="green">5 этапов · один настоящий результат</Badge>
+            <Badge tone="green">{t('5 этапов · один настоящий результат')}</Badge>
             <h2>
-              Начни с проблемы,
+              {t('Начни с проблемы,')}
               <br />
-              которую ты замечаешь.
+              {t('которую ты замечаешь.')}
             </h2>
-            <p>Не нужно знать всё о бизнесе. Собери команду, сохрани первую идею и сделай следующий шаг.</p>
+            <p>
+              {t('Не нужно знать всё о бизнесе. Собери команду, сохрани первую идею и сделай следующий шаг.')}
+            </p>
             <Button onClick={() => navigate('/join')}>
-              Создать команду <ArrowRight size={17} />
+              {t('Создать команду')} <ArrowRight size={17} />
             </Button>
             {data.demoMode && (
               <Button variant="ghost" onClick={() => demoLogin('team')}>
-                Посмотреть демо-команду
+                {t('Посмотреть демо-команду')}
               </Button>
             )}
             <button className="text-link" onClick={() => navigate('/join?login=1')}>
-              Уже есть команда? Войти по ключу
+              {t('Уже есть команда? Войти по ключу')}
             </button>
           </div>
         </div>
@@ -73,6 +77,7 @@ export default function Incubator({ data, me, refresh, navigate, notify, demoLog
   );
 }
 function TeamWorkspace({ team, data, refresh, notify, navigate }) {
+  const { t, tf, te, lang, loc } = useI18n();
   const [active, setActive] = useState(
     Math.min(
       4,
@@ -89,7 +94,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
     [pendingDraft, setPendingDraft] = useState(null),
     [invite, setInvite] = useState(null),
     [deleteOpen, setDeleteOpen] = useState(false),
-    [language, setLanguage] = useState('ru');
+    [language, setLanguage] = useState(lang);
   const [submission, setSubmission] = useState({
     title: team.submission?.title || '',
     url: team.submission?.url || '',
@@ -113,7 +118,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
   useEffect(() => {
     api('/api/team/mentor')
       .then((r) => setMessages(r.messages))
-      .catch((e) => notify(e.message, 'error'));
+      .catch((e) => notify(te(e.message), 'error'));
   }, [notify]);
   useEffect(() => {
     if (!dirty) return;
@@ -130,7 +135,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
   function changeStep(index) {
     if (
       dirty &&
-      !window.confirm('В текущем этапе есть несохранённые изменения. Переключиться без сохранения?')
+      !window.confirm(t('В текущем этапе есть несохранённые изменения. Переключиться без сохранения?'))
     )
       return;
     setDrafts((d) => ({ ...d, [active]: step.content }));
@@ -149,18 +154,18 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
       notify(
         complete
           ? step.completed
-            ? 'Этап снова в работе.'
-            : 'Этап завершён. +100 XP за содержательную работу!'
-          : 'Заметки сохранены.',
+            ? t('Этап снова в работе.')
+            : t('Этап завершён. +100 XP за содержательную работу!')
+          : t('Заметки сохранены.'),
       );
     } catch (e) {
-      notify(e.message, 'error');
+      notify(te(e.message), 'error');
     } finally {
       setBusy('');
     }
   }
   async function ask(mode) {
-    if (dirty) return notify('Сначала сохраните заметки — наставник читает сохранённую версию.', 'error');
+    if (dirty) return notify(t('Сначала сохраните заметки — наставник читает сохранённую версию.'), 'error');
     setBusy('mentor');
     const optimistic = {
       id: `local-${Date.now()}`,
@@ -169,10 +174,10 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
       content:
         message ||
         {
-          guide: 'Помоги сделать следующий шаг',
-          review: 'Проверь мои заметки',
-          draft: 'Предложи каркас заметок',
-          pitch: 'Помоги подготовить питч',
+          guide: t('Помоги сделать следующий шаг'),
+          review: t('Проверь мои заметки'),
+          draft: t('Предложи каркас заметок'),
+          pitch: t('Помоги подготовить питч'),
         }[mode],
     };
     setMessages((m) => [...m, optimistic]);
@@ -185,7 +190,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
       setMessage('');
     } catch (e) {
       setMessages((m) => m.filter((x) => x.id !== optimistic.id));
-      notify(e.message, 'error');
+      notify(te(e.message), 'error');
     } finally {
       setBusy('');
     }
@@ -196,43 +201,46 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
     try {
       await post('/api/team/submission', submission);
       await refresh();
-      notify('Паспорт отправлен. Зачёт появится после ручной проверки.');
+      notify(t('Паспорт отправлен. Зачёт появится после ручной проверки.'));
     } catch (e) {
-      notify(e.message, 'error');
+      notify(te(e.message), 'error');
     } finally {
       setBusy('');
     }
   }
   async function share() {
     const link = inviteLink(team.school.id);
-    if (await copyText(link)) notify('Ссылка-вызов скопирована.');
+    if (await copyText(link)) notify(t('Ссылка-вызов скопирована.'));
     else setInvite(link);
   }
   function exportNotes() {
     downloadFile(
       `${team.name.replace(/[^a-zа-яё0-9_-]/gi, '_')}-startup-notes.md`,
-      `# ${team.name}\n\n${team.school.name} · ${team.school.countryName}\n\n${team.steps
+      `# ${team.name}\n\n${team.school.name} · ${t(team.school.countryName)}\n\n${team.steps
         .slice(0, 4)
-        .map((s) => `## ${s.index}. ${s.title}\n\n${drafts[s.index] || 'Черновик пока пуст.'}`)
+        .map((s) => `## ${s.index}. ${loc(s, 'title')}\n\n${drafts[s.index] || t('Черновик пока пуст.')}`)
         .join(
           '\n\n',
-        )}\n\nКод команды для описания паспорта: ${team.verificationCode || '—'}\n\n---\nСтатус: ${team.submission?.status || 'draft'}. Не является сертификатом AI Startify.`,
+        )}\n\n${tf('Код команды для описания паспорта: {code}', { code: team.verificationCode || '—' })}\n\n---\n${tf('Статус: {status}. Не является сертификатом AI Startify.', { status: team.submission?.status || 'draft' })}`,
     );
   }
   return (
     <>
       <SectionHead
-        eyebrow={`${team.school.countryName.toUpperCase()} · ${team.school.name}`}
+        eyebrow={`${t(team.school.countryName).toUpperCase()} · ${team.school.name}`}
         title={team.name}
-        text={`Команда ${team.nickname} · ${team.isDemo ? 'учебное демо-пространство' : 'пилотная команда'}`}
+        text={tf('Команда {nickname} · {state}', {
+          nickname: team.nickname,
+          state: team.isDemo ? t('учебное демо-пространство') : t('пилотная команда'),
+        })}
       >
         <Button variant="ghost" onClick={share}>
           <Copy size={16} />
-          Вызов другой школе
+          {t('Вызов другой школе')}
         </Button>
         <Button variant="ghost" onClick={exportNotes}>
           <Download size={16} />
-          Экспорт заметок
+          {t('Экспорт заметок')}
         </Button>
       </SectionHead>
       {(team.reminders || []).filter((r) => !r.readAt).length > 0 && (
@@ -246,7 +254,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 </span>
                 <div>
                   <Badge tone="amber">
-                    {r.authorRole === 'teacher' ? 'Координатор школы' : 'Организатор'}
+                    {r.authorRole === 'teacher' ? t('Координатор школы') : t('Организатор')}
                   </Badge>
                   <p>{r.message}</p>
                 </div>
@@ -258,12 +266,12 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                       await post(`/api/team/reminders/${r.id}/read`, {});
                       await refresh();
                     } catch (e) {
-                      notify(e.message, 'error');
+                      notify(te(e.message), 'error');
                     }
                   }}
                 >
                   <Check size={14} />
-                  Прочитано
+                  {t('Прочитано')}
                 </Button>
               </article>
             ))}
@@ -276,14 +284,14 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
               <Compass size={22} />
             </span>
             <div>
-              <h3>От идеи к публикации</h3>
-              <p>Каждый завершённый этап — конкретный результат, а не просто галочка.</p>
+              <h3>{t('От идеи к публикации')}</h3>
+              <p>{t('Каждый завершённый этап — конкретный результат, а не просто галочка.')}</p>
             </div>
           </div>
           <div className="xp">
             <Zap size={17} />
             <strong>{team.xp} XP</strong>
-            <span>{completed} из 5 этапов</span>
+            <span>{tf('{done} из 5 этапов', { done: completed })}</span>
           </div>
         </div>
         <Progress value={completed * 20} />
@@ -304,8 +312,8 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 )}
               </span>
               <div>
-                <small>ЭТАП 0{s.index}</small>
-                <strong>{s.title}</strong>
+                <small>{tf('ЭТАП 0{index}', { index: s.index })}</small>
+                <strong>{loc(s, 'title')}</strong>
               </div>
               {active === s.index && <ChevronRight size={16} />}
             </button>
@@ -317,36 +325,39 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
           <Card className="notebook">
             <div className="card-heading">
               <div>
-                <span className="eyebrow">РАБОЧАЯ ТЕТРАДЬ · 0{active}</span>
-                <h2>{step.title}</h2>
+                <span className="eyebrow">{tf('РАБОЧАЯ ТЕТРАДЬ · 0{index}', { index: active })}</span>
+                <h2>{loc(step, 'title')}</h2>
               </div>
               {step.completed ? (
                 <Badge tone="green">
                   <Check size={13} />
-                  Завершён
+                  {t('Завершён')}
                 </Badge>
               ) : (
-                <Badge>В работе</Badge>
+                <Badge>{t('В работе')}</Badge>
               )}
             </div>
-            <p className="muted">{step.description}</p>
+            <p className="muted">{loc(step, 'description')}</p>
             <div className="mentor-prompt">
               <LightIcon />
               <div>
-                <strong>Подумай об этом</strong>
-                <p>{step.prompt}</p>
+                <strong>{t('Подумай об этом')}</strong>
+                <p>{loc(step, 'prompt')}</p>
               </div>
             </div>
             <Field
-              label="Заметки команды"
-              hint={`${drafts[active].length} / 5000 · минимум 80 символов для зачёта этапа. Не включайте персональные данные.`}
+              label={t('Заметки команды')}
+              hint={tf(
+                '{done} / 5000 · минимум 80 символов для зачёта этапа. Не включайте персональные данные.',
+                { done: drafts[active].length },
+              )}
             >
               <textarea
                 className="notebook-editor"
                 rows={13}
                 maxLength={5000}
                 disabled={locked}
-                placeholder={step.example + '\n\nНачните с того, что уже знаете…'}
+                placeholder={loc(step, 'example') + '\n\n' + t('Начните с того, что уже знаете…')}
                 value={drafts[active]}
                 onChange={(e) => setDrafts((d) => ({ ...d, [active]: e.target.value }))}
               />
@@ -354,11 +365,11 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
             <div className="editor-footer">
               <span className={dirty ? 'unsaved' : 'saved'}>
                 {dirty ? (
-                  '● Есть несохранённые изменения'
+                  t('● Есть несохранённые изменения')
                 ) : (
                   <>
                     <CheckCircle2 size={14} />
-                    Все изменения сохранены
+                    {t('Все изменения сохранены')}
                   </>
                 )}
               </span>
@@ -370,7 +381,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   onClick={() => save(false)}
                 >
                   <Save size={15} />
-                  Сохранить
+                  {t('Сохранить')}
                 </Button>
                 <Button
                   busy={busy === 'complete'}
@@ -378,14 +389,15 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   onClick={() => save(true)}
                 >
                   {step.completed ? <RotateCcw size={15} /> : <Check size={15} />}
-                  {step.completed ? 'Вернуть в работу' : 'Завершить этап'}
+                  {step.completed ? t('Вернуть в работу') : t('Завершить этап')}
                 </Button>
               </div>
             </div>
             {!step.completed && (
               <small className="muted">
-                Сначала сохраните хотя бы 80 символов заметок. Нажимайте «Завершить этап», только когда
-                результат действительно готов.
+                {t(
+                  'Сначала сохраните хотя бы 80 символов заметок. Нажимайте «Завершить этап», только когда результат действительно готов.',
+                )}
               </small>
             )}
           </Card>
@@ -395,17 +407,17 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 <Sparkles size={20} />
               </span>
               <div>
-                <h3>Твой наставник</h3>
-                <small>{data.llm.enabled ? data.llm.model : 'Учебные шаблоны · AI не подключён'}</small>
+                <h3>{t('Твой наставник')}</h3>
+                <small>{data.llm.enabled ? data.llm.model : t('Учебные шаблоны · AI не подключён')}</small>
               </div>
               <span className={`status-dot ${data.llm.enabled ? 'on' : ''}`} />
             </div>
             <div className="mentor-actions">
               {[
-                ['guide', 'Следующий шаг', Compass],
-                ['review', 'Проверка', ClipboardCheck],
-                ['draft', 'Каркас', FileText],
-                ['pitch', 'Питч', WandSparkles],
+                ['guide', t('Следующий шаг'), Compass],
+                ['review', t('Проверка'), ClipboardCheck],
+                ['draft', t('Каркас'), FileText],
+                ['pitch', t('Питч'), WandSparkles],
               ].map(([mode, label, Icon]) => (
                 <button key={mode} disabled={!!busy || locked} onClick={() => ask(mode)}>
                   <Icon size={14} />
@@ -417,14 +429,16 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
               <div className="chat-intro">
                 <Sparkles size={24} />
                 <strong>
-                  Не придумаем стартап за тебя.
+                  {t('Не придумаем стартап за тебя.')}
                   <br />
-                  Поможем сделать следующий шаг.
+                  {t('Поможем сделать следующий шаг.')}
                 </strong>
                 <p>
                   {data.llm.enabled
-                    ? 'AI может ошибаться. Проверяйте факты и сохраняйте только свою работу.'
-                    : 'Сейчас работают честные учебные шаблоны. Для ответов SmallThinker подключите модель на сервере.'}
+                    ? t('AI может ошибаться. Проверяйте факты и сохраняйте только свою работу.')
+                    : t(
+                        'Сейчас работают честные учебные шаблоны. Для ответов SmallThinker подключите модель на сервере.',
+                      )}
                 </p>
               </div>
               {messages
@@ -437,7 +451,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   ) : (
                     <div className="chat-reply" key={m.id}>
                       <Badge tone={m.source === 'llm' ? 'purple' : 'neutral'}>
-                        {m.source === 'llm' ? `AI · ${m.result.model}` : 'Шаблон · не AI'}
+                        {m.source === 'llm' ? `AI · ${m.result.model}` : t('Шаблон · не AI')}
                       </Badge>
                       <p>{m.result.reply}</p>
                       <ul>
@@ -452,7 +466,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                           onClick={() => setPendingDraft(m.result.draft)}
                         >
                           <FileText size={14} />
-                          Использовать черновик
+                          {t('Использовать черновик')}
                         </button>
                       )}
                       <div className="chat-question">{m.result.nextQuestion}</div>
@@ -464,7 +478,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   <span />
                   <span />
                   <span />
-                  Наставник готовит ответ…
+                  {t('Наставник готовит ответ…')}
                 </div>
               )}
             </div>
@@ -476,23 +490,27 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
               }}
             >
               <textarea
-                aria-label="Вопрос наставнику"
+                aria-label={t('Вопрос наставнику')}
                 rows={2}
                 maxLength={1500}
-                placeholder="Спроси о своём проекте…"
+                placeholder={t('Спроси о своём проекте…')}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
               />
               <div>
                 <select
-                  aria-label="Язык ответа"
+                  aria-label={t('Язык ответа')}
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                 >
-                  <option value="ru">Русский</option>
+                  <option value="ru">{t('Русский')}</option>
                   <option value="en">English</option>
                 </select>
-                <button className="send-button" aria-label="Отправить наставнику" disabled={!!busy || locked}>
+                <button
+                  className="send-button"
+                  aria-label={t('Отправить наставнику')}
+                  disabled={!!busy || locked}
+                >
                   <Send size={17} />
                 </button>
               </div>
@@ -502,17 +520,17 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 className="clear-chat"
                 disabled={!!busy}
                 onClick={async () => {
-                  if (!window.confirm('Удалить историю наставника? Заметки останутся.')) return;
+                  if (!window.confirm(t('Удалить историю наставника? Заметки останутся.'))) return;
                   try {
                     await api('/api/team/mentor', { method: 'DELETE' });
                     setMessages([]);
                   } catch (e) {
-                    notify(e.message, 'error');
+                    notify(te(e.message), 'error');
                   }
                 }}
               >
                 <Trash2 size={12} />
-                Очистить историю
+                {t('Очистить историю')}
               </button>
             )}
           </Card>
@@ -521,8 +539,8 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
         <Card className="publication">
           <div className="card-heading">
             <div>
-              <span className="eyebrow">ФИНИШ, КОТОРЫЙ ВИДНО МИРУ</span>
-              <h2>Публикация проекта</h2>
+              <span className="eyebrow">{t('ФИНИШ, КОТОРЫЙ ВИДНО МИРУ')}</span>
+              <h2>{t('Публикация проекта')}</h2>
             </div>
             <Status submission={team.submission} />
           </div>
@@ -532,10 +550,11 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 <Fingerprint size={20} />
               </span>
               <div>
-                <strong>Код вашей команды</strong>
+                <strong>{t('Код вашей команды')}</strong>
                 <p>
-                  Добавьте его в описание проекта в AI Startify. Без кода организатор не сможет подтвердить,
-                  что публикация принадлежит вам.
+                  {t(
+                    'Добавьте его в описание проекта в AI Startify. Без кода организатор не сможет подтвердить, что публикация принадлежит вам.',
+                  )}
                 </p>
               </div>
               <code>{team.verificationCode}</code>
@@ -545,71 +564,75 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 onClick={async () => {
                   const ok = await copyText(team.verificationCode);
                   notify(
-                    ok ? 'Код скопирован. Вставьте его в описание проекта.' : 'Скопируйте код вручную.',
+                    ok ? t('Код скопирован. Вставьте его в описание проекта.') : t('Скопируйте код вручную.'),
                     ok ? 'success' : 'error',
                   );
                 }}
               >
                 <Copy size={14} />
-                Копировать
+                {t('Копировать')}
               </Button>
             </div>
           )}
           <div className="publication-flow">
             <div>
               <span>1</span>
-              <h3>Опубликуй в AI Startify</h3>
-              <p>Пройди инкубатор на платформе и получи ссылку на паспорт проекта.</p>
+              <h3>{t('Опубликуй в AI Startify')}</h3>
+              <p>{t('Пройди инкубатор на платформе и получи ссылку на паспорт проекта.')}</p>
               <a
                 className="btn dark"
                 href="https://aistartify.com/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Открыть AI Startify <ExternalLink size={16} />
+                {t('Открыть AI Startify')} <ExternalLink size={16} />
               </a>
             </div>
             <ArrowRight size={24} />
             <div>
               <span>2</span>
-              <h3>Добавь код команды</h3>
+              <h3>{t('Добавь код команды')}</h3>
               <p>
-                Вставь код ниже в описание проекта на AI Startify. Так организатор поймёт, что паспорт ваш, а
-                не чужой.
+                {t(
+                  'Вставь код ниже в описание проекта на AI Startify. Так организатор поймёт, что паспорт ваш, а не чужой.',
+                )}
               </p>
             </div>
             <ArrowRight size={24} />
             <div>
               <span>3</span>
-              <h3>Получи зачёт</h3>
+              <h3>{t('Получи зачёт')}</h3>
               <p>
-                Проект появится на витрине, а школа получит балл в лиге. Автоматической синхронизации пока
-                нет.
+                {t(
+                  'Проект появится на витрине, а школа получит балл в лиге. Автоматической синхронизации пока нет.',
+                )}
               </p>
             </div>
           </div>
           {team.submission?.status === 'approved' ? (
             <div className="success-panel">
               <Trophy size={40} />
-              <h2>Ваш проект на орбите!</h2>
-              <p>{team.submission.title} · подтверждён организатором</p>
+              <h2>{t('Ваш проект на орбите!')}</h2>
+              <p>{tf('{title} · подтверждён организатором', { title: team.submission.title })}</p>
               <Button onClick={() => navigate('/showcase')}>
-                Посмотреть витрину <ArrowUpRight size={16} />
+                {t('Посмотреть витрину')} <ArrowUpRight size={16} />
               </Button>
             </div>
           ) : team.submission?.status === 'pending' ? (
             <div className="notice">
               <CheckCircle2 size={22} />
               <div>
-                <strong>{team.submission.title} ожидает проверки</strong>
+                <strong>{tf('{title} ожидает проверки', { title: team.submission.title })}</strong>
                 <p>
-                  Редактирование этапов временно заблокировано. Статус обновится после решения организатора.
+                  {t(
+                    'Редактирование этапов временно заблокировано. Статус обновится после решения организатора.',
+                  )}
                 </p>
                 <button
                   className="text-link"
-                  onClick={() => refresh().catch((e) => notify(e.message, 'error'))}
+                  onClick={() => refresh().catch((e) => notify(te(e.message), 'error'))}
                 >
-                  Обновить статус <RotateCcw size={14} />
+                  {t('Обновить статус')} <RotateCcw size={14} />
                 </button>
               </div>
             </div>
@@ -617,27 +640,31 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
             <>
               {completed < 4 && (
                 <div className="notice warning">
-                  Завершено {completed} из 4 подготовительных этапов. Сначала добавьте результаты в рабочую
-                  тетрадь.
+                  {tf(
+                    'Завершено {done} из 4 подготовительных этапов. Сначала добавьте результаты в рабочую тетрадь.',
+                    {
+                      done: completed,
+                    },
+                  )}
                 </div>
               )}
               {team.submission?.status === 'returned' && (
                 <div className="notice warning">
-                  <strong>Комментарий организатора:</strong> {team.submission.review_comment}
+                  <strong>{t('Комментарий организатора:')}</strong> {team.submission.review_comment}
                 </div>
               )}
               <form className="form-grid" onSubmit={submit}>
-                <Field label="Название проекта">
+                <Field label={t('Название проекта')}>
                   <input
                     required
                     minLength={2}
                     maxLength={120}
                     value={submission.title}
                     onChange={(e) => setSubmission({ ...submission, title: e.target.value })}
-                    placeholder="Например, EcoTrack"
+                    placeholder={t('Например, EcoTrack')}
                   />
                 </Field>
-                <Field label="Направление">
+                <Field label={t('Направление')}>
                   <select
                     value={submission.category}
                     onChange={(e) => setSubmission({ ...submission, category: e.target.value })}
@@ -648,9 +675,11 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   </select>
                 </Field>
                 <Field
-                  label="Ссылка на паспорт AI Startify"
+                  label={t('Ссылка на паспорт AI Startify')}
                   className="full-width"
-                  hint="Только https://aistartify.com/startup/<id>. Доступность ссылки проверяет человек, не этот сервер."
+                  hint={t(
+                    'Только https://aistartify.com/startup/<id>. Доступность ссылки проверяет человек, не этот сервер.',
+                  )}
                 >
                   <input
                     type="url"
@@ -661,9 +690,9 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   />
                 </Field>
                 <Field
-                  label="Что решает ваш проект?"
+                  label={t('Что решает ваш проект?')}
                   className="full-width"
-                  hint="От 30 до 1000 символов. Не включайте персональные данные школьников."
+                  hint={t('От 30 до 1000 символов. Не включайте персональные данные школьников.')}
                 >
                   <textarea
                     rows={3}
@@ -676,7 +705,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 </Field>
                 <Button busy={busy === 'submit'} disabled={completed < 4}>
                   <Send size={16} />
-                  Отправить на проверку
+                  {t('Отправить на проверку')}
                 </Button>
               </form>
             </>
@@ -685,30 +714,31 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
       )}
       <div className="achievement-row">
         {[
-          [MessageCircle, 'Первый шаг', completed >= 1],
-          [ClipboardCheck, 'Исследователь', completed >= 2],
-          [WandSparkles, 'Создатель', completed >= 3],
-          [Trophy, 'На орбите', completed >= 5],
+          [MessageCircle, t('Первый шаг'), completed >= 1],
+          [ClipboardCheck, t('Исследователь'), completed >= 2],
+          [WandSparkles, t('Создатель'), completed >= 3],
+          [Trophy, t('На орбите'), completed >= 5],
         ].map(([Icon, label, earned]) => (
           <div className={earned ? 'earned' : ''} key={label}>
             <Icon size={22} />
             <span>
               {label}
-              <small>{earned ? 'Получено' : 'Впереди'}</small>
+              <small>{earned ? t('Получено') : t('Впереди')}</small>
             </span>
             {earned && <Check size={14} />}
           </div>
         ))}
       </div>
       {deleteOpen && (
-        <Modal title="Удалить данные команды?" onClose={() => setDeleteOpen(false)}>
+        <Modal title={t('Удалить данные команды?')} onClose={() => setDeleteOpen(false)}>
           <p>
-            Будут удалены заметки, история наставника, заявки и ключ команды. Проект исчезнет из рейтинга.
-            Действие необратимо; сначала сохраните нужные материалы через экспорт.
+            {t(
+              'Будут удалены заметки, история наставника, заявки и ключ команды. Проект исчезнет из рейтинга. Действие необратимо; сначала сохраните нужные материалы через экспорт.',
+            )}
           </p>
           <div className="modal-actions">
             <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
-              Отмена
+              {t('Отмена')}
             </Button>
             <Button
               busy={busy === 'delete'}
@@ -719,29 +749,30 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                   setDrafts({ 1: '', 2: '', 3: '', 4: '', 5: '' });
                   await refresh();
                   navigate('/');
-                  notify('Данные команды удалены.');
+                  notify(t('Данные команды удалены.'));
                 } catch (e) {
-                  notify(e.message, 'error');
+                  notify(te(e.message), 'error');
                 } finally {
                   setBusy('');
                 }
               }}
             >
-              Удалить навсегда
+              {t('Удалить навсегда')}
             </Button>
           </div>
         </Modal>
       )}
       {pendingDraft && (
-        <Modal title="Использовать черновик?" onClose={() => setPendingDraft(null)}>
+        <Modal title={t('Использовать черновик?')} onClose={() => setPendingDraft(null)}>
           <p>
-            Текст заменит заметки текущего этапа, но не сохранится и не завершит этап автоматически. Проверьте
-            факты и добавьте свою работу.
+            {t(
+              'Текст заменит заметки текущего этапа, но не сохранится и не завершит этап автоматически. Проверьте факты и добавьте свою работу.',
+            )}
           </p>
           <pre className="draft-preview">{pendingDraft}</pre>
           <div className="modal-actions">
             <Button variant="ghost" onClick={() => setPendingDraft(null)}>
-              Отмена
+              {t('Отмена')}
             </Button>
             <Button
               onClick={() => {
@@ -749,13 +780,13 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
                 setPendingDraft(null);
               }}
             >
-              Заменить заметки
+              {t('Заменить заметки')}
             </Button>
           </div>
         </Modal>
       )}
       {invite && (
-        <Modal title="Ссылка-вызов" onClose={() => setInvite(null)}>
+        <Modal title={t('Ссылка-вызов')} onClose={() => setInvite(null)}>
           <input readOnly value={invite} onFocus={(e) => e.target.select()} />
         </Modal>
       )}
@@ -763,7 +794,7 @@ function TeamWorkspace({ team, data, refresh, notify, navigate }) {
         <div className="data-controls">
           <button className="text-link" onClick={() => setDeleteOpen(true)}>
             <Trash2 size={13} />
-            Удалить данные команды
+            {t('Удалить данные команды')}
           </button>
         </div>
       )}
