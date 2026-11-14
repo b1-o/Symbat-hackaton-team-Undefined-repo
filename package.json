@@ -14,8 +14,8 @@
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
     "llm:check": "node --env-file-if-exists=.env scripts/check-llm.js",
-    "format": "prettier --write server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json",
-    "format:check": "prettier --check server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json",
+    "format": "prettier --write server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json render.yaml",
+    "format:check": "prettier --check server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json render.yaml",
     "backup": "node --env-file-if-exists=.env scripts/backup.js"
   },
   "dependencies": {

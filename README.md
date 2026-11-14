@@ -17,6 +17,12 @@ npm run dev
 
 Демо-вход включён по умолчанию вне production. В интерфейсе выберите **«Посмотреть демо-команду»** или **«Демо-организатор»**. Демо-данные помечены и не являются статистикой всей платформы AI Startify.
 
+## Публичное демо для жюри
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/b1-o/Symbat-hackaton-team-Undefined-repo)
+
+Готовый blueprint: один Docker-сервис + persistent disk для SQLite, демо-данные включены, SmallThinker выключена. Пошагово: [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md). Нужен платный минимальный инстанс Render; бесплатный тариф без диска не сохраняет SQLite.
+
 ## Что работает
 
 - обзор, витрина подтверждённых проектов, лига школ и стран;

@@ -1,0 +1,34 @@
+# Jury demo: one Docker web service + persistent SQLite disk.
+# Paid Render instance required for persistent disks; see docs/DEPLOY_RENDER.md.
+services:
+  - type: web
+    runtime: docker
+    name: startify-sprint
+    repo: https://github.com/b1-o/Symbat-hackaton-team-Undefined-repo
+    branch: main
+    region: frankfurt
+    plan: 0.5c-512mb
+    numInstances: 1
+    healthCheckPath: /api/health
+    autoDeployTrigger: 'off'
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    disk:
+      name: startify-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_MODE
+        value: 'true'
+      - key: SEED_DEMO
+        value: 'true'
+      - key: DB_PATH
+        value: /app/data/startify.db
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: TRUST_PROXY
+        value: '1'
+      - key: LLM_ENABLED
+        value: 'false'
