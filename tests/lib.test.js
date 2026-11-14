@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePassportUrl, cleanText, countryName, funnelModel, safeCsvCell, referralAttribution, projectReadiness } from '../server/lib.js';
+import { normalizePassportUrl, cleanText, countryName, funnelModel, safeCsvCell, referralAttribution, projectReadiness, median, hoursBetween, attentionReason, challengeSlug } from '../server/lib.js';
 
 test('normalizePassportUrl accepts canonical AI Startify passport URL', () => {
   const result = normalizePassportUrl('https://aistartify.com/startup/abc-123/');
@@ -45,3 +45,34 @@ test('referrals require known, different school and readiness is evidence-based'
 });
 
 test('default HTTPS port is canonicalized',()=>{assert.equal(normalizePassportUrl('https://aistartify.com:443/startup/x').url,'https://aistartify.com/startup/x');});
+
+test('median handles empty, odd and even samples',()=>{
+ assert.equal(median([]),null);assert.equal(median([5]),5);assert.equal(median([9,1,5]),5);assert.equal(median([4,1,3,2]),2.5);
+ const input=[3,1,2];median(input);assert.deepEqual(input,[3,1,2]);
+});
+test('hoursBetween is null-safe and never invents elapsed time',()=>{
+ assert.equal(hoursBetween(null),null);assert.equal(hoursBetween('не дата'),null);
+ assert.equal(hoursBetween('2026-11-14T00:00:00.000Z',new Date('2026-11-14T06:00:00.000Z').getTime()),6);
+});
+test('attention list ranks returned and ready-to-publish teams first',()=>{
+ const now=new Date('2026-11-14T12:00:00.000Z').getTime();
+ const day=offset=>new Date(now-offset*86400000).toISOString();
+ assert.equal(attentionReason({stepsCompleted:5,submissionStatus:'approved'},now),null);
+ assert.equal(attentionReason({stepsCompleted:4,submissionStatus:'returned'},now).code,'returned');
+ assert.equal(attentionReason({stepsCompleted:4,submissionStatus:null},now).code,'ready');
+ assert.equal(attentionReason({stepsCompleted:4,submissionStatus:'pending'},now).code,'review');
+ assert.equal(attentionReason({stepsCompleted:0,startedAt:null,createdAt:day(2)},now).code,'not_started');
+ assert.equal(attentionReason({stepsCompleted:0,startedAt:null,createdAt:day(0.2)},now),null);
+ assert.equal(attentionReason({stepsCompleted:2,startedAt:day(4),lastActivityAt:day(3)},now).label,'Нет активности 3 дн.');
+ assert.equal(attentionReason({stepsCompleted:2,startedAt:day(1),lastActivityAt:day(0.1)},now),null);
+ const order=['returned','ready','not_started','idle','review'].map(code=>({returned:1,ready:2,not_started:3,idle:4,review:5}[code]));
+ assert.deepEqual(order,[...order].sort((a,b)=>a-b));
+});
+test('challenge slug transliterates Cyrillic and stays URL-safe',()=>{
+ assert.equal(challengeSlug('Проблема моей школы'),'problema-moei-shkoly');
+ assert.equal(challengeSlug('  Осень 2026 · Алматы!  '),'osen-2026-almaty');
+ assert.equal(challengeSlug('№5 ***'),'5');
+ assert.equal(challengeSlug('№ *** '),'sprint');
+ assert.equal(challengeSlug(''),'sprint');
+ assert.match(challengeSlug('Қысқы спринт'),/^[a-z0-9-]+$/);
+});
