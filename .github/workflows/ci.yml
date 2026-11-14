@@ -1,51 +1,28 @@
-name: CI
-
+name: Quality checks
 on:
   push:
-    branches: [main]
+    branches: [main, 'arena/**']
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
-  verify:
-    name: Tests and build
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
-      - name: Unit, API, migration and UI tests
-        run: npm test
-      - name: Production build
-        run: npm run build
-
-  e2e:
-    name: Browser smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Start the app
+      - run: npm ci --ignore-scripts
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npm audit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Backup smoke test
         run: |
-          npm run dev > /tmp/startify.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:3000/api/health > /dev/null; then exit 0; fi
-            sleep 1
-          done
-          echo "Server did not become healthy"; cat /tmp/startify.log; exit 1
-      - name: Playwright smoke
-        run: npm run test:e2e
-      - name: Server log on failure
-        if: failure()
-        run: cat /tmp/startify.log
+          DB_PATH="$RUNNER_TEMP/check.db" node -e "import('./server/db.js').then(({createDatabase})=>createDatabase(process.env.DB_PATH).close())"
+          DB_PATH="$RUNNER_TEMP/check.db" npm run backup -- "$RUNNER_TEMP/backups"
