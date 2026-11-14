@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -49,6 +50,7 @@ export function createDatabase(filename = ':memory:', { seedDemo = true } = {}) 
   addColumn('sessions', 'expires_at', 'TEXT');
   addColumn('submissions', 'category', "TEXT NOT NULL DEFAULT 'Другое'");
   addColumn('submissions', 'review_checklist', "TEXT NOT NULL DEFAULT '{}'");
+  addColumn('teams', 'verification_code', 'TEXT');
   addColumn('schools', 'access_hash', 'TEXT');
   addColumn('schools', 'coordinator_name', "TEXT NOT NULL DEFAULT ''");
   addColumn('sessions', 'school_id', 'TEXT REFERENCES schools(id) ON DELETE CASCADE');
@@ -74,6 +76,7 @@ export function createDatabase(filename = ':memory:', { seedDemo = true } = {}) 
       author_role TEXT NOT NULL CHECK(author_role IN ('teacher', 'organizer')),
       message TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_verification ON teams(verification_code) WHERE verification_code IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_reminders_team ON reminders(team_id, read_at, created_at);
     CREATE TABLE IF NOT EXISTS invite_clicks (
       id TEXT PRIMARY KEY, challenge_id TEXT NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
@@ -109,8 +112,26 @@ export function createDatabase(filename = ':memory:', { seedDemo = true } = {}) 
   // Old raw-token sessions cannot be migrated to hashes; require a fresh login once.
   db.prepare('DELETE FROM sessions WHERE expires_at IS NULL').run();
   if (!db.prepare('SELECT COUNT(*) c FROM challenges').get().c) seed(db, seedDemo);
+  // Teams created before ownership checks still need a code to put into their passport.
+  const backfill = db.prepare('UPDATE teams SET verification_code=? WHERE id=?');
+  for (const team of db.prepare('SELECT id FROM teams WHERE verification_code IS NULL').all()) backfill.run(uniqueVerificationCode(db), team.id);
   return db;
 }
+
+// Unambiguous alphabet: no O/0 or I/1, so a code can be read aloud and retyped.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function newVerificationCode() {
+  return `SS-${Array.from(randomBytes(8), b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')}`;
+}
+function uniqueVerificationCode(db) {
+  const exists = db.prepare('SELECT 1 FROM teams WHERE verification_code=?');
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const code = newVerificationCode();
+    if (!exists.get(code)) return code;
+  }
+  throw new Error('Could not allocate a unique verification code.');
+}
+export { uniqueVerificationCode };
 
 export const DEMO_CHALLENGE_ID = 'challenge-2026';
 export const DEMO_SCHOOL_IDS = ['school-kz-demo', 'school-uz-demo', 'school-kg-demo'];
@@ -170,8 +191,8 @@ function seedDemoRows(db) {
   school.run('school-uz-demo', 'Демо-школа №2', 'демо-школа №2', 'UZ', 'Ташкент', 'Демо-координатор');
   school.run('school-kg-demo', 'Демо-гимназия', 'демо-гимназия', 'KG', 'Бишкек', 'Демо-координатор');
   for (const [id, schoolId, name, nickname, completed, title, category, description, status] of samples()) {
-    db.prepare('INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, consent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, DEMO_CHALLENGE_ID, schoolId, name, name.toLowerCase(), nickname, schoolId === 'school-kg-demo' ? 'school-kz-demo' : null, iso, completed ? iso : null, iso);
+    db.prepare('INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, consent_at, verification_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, DEMO_CHALLENGE_ID, schoolId, name, name.toLowerCase(), nickname, schoolId === 'school-kg-demo' ? 'school-kz-demo' : null, iso, completed ? iso : null, iso, uniqueVerificationCode(db));
     for (let i = 1; i <= completed; i++) {
       const content = `${STORAGE_EXAMPLES[i - 1]} Учебный пример команды ${name}. Данные вымышлены и не являются результатом реального исследования.`;
       db.prepare('INSERT INTO steps VALUES (?, ?, ?)').run(id, i, iso);
