@@ -51,6 +51,44 @@ export function safeCsvCell(value) {
   if (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
+export function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
+}
+export function hoursBetween(from, to = Date.now()) {
+  if (!from) return null;
+  const start = new Date(from).getTime();
+  const end = typeof to === 'number' ? to : new Date(to).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return (end - start) / 3600000;
+}
+// Why a coordinator should look at this team today. Ordered by how much a nudge is worth.
+export function attentionReason(team, nowMs = Date.now()) {
+  const steps = Number(team.stepsCompleted) || 0;
+  const status = team.submissionStatus || null;
+  if (status === 'approved') return null;
+  if (status === 'returned') return { code: 'returned', label: 'Проект вернули на доработку', tone: 'red', priority: 1 };
+  if (steps >= 4 && !status) return { code: 'ready', label: 'Готовы опубликовать паспорт', tone: 'purple', priority: 2 };
+  if (status === 'pending') return { code: 'review', label: 'Ждёт проверки организатором', tone: 'amber', priority: 5 };
+  const sinceCreated = hoursBetween(team.createdAt, nowMs);
+  if (!team.startedAt && sinceCreated !== null && sinceCreated >= 24) return { code: 'not_started', label: 'Не начали работу больше суток', tone: 'red', priority: 3 };
+  const idle = hoursBetween(team.lastActivityAt || team.startedAt || team.createdAt, nowMs);
+  if (idle !== null && idle >= 48) return { code: 'idle', label: `Нет активности ${Math.floor(idle / 24)} дн.`, tone: 'amber', priority: 4 };
+  return null;
+}
+export const REMINDER_PRESETS = [
+  'Загляните в инкубатор: следующий этап ждёт всего одного маленького шага.',
+  'На этапе 2 нужны три коротких интервью. Запишите выводы без личных данных.',
+  'Ваши четыре этапа готовы. Опубликуйте паспорт в AI Startify и отправьте ссылку на проверку.',
+  'Проект вернули на доработку: прочитайте комментарий организатора и отправьте снова.'
+];
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya', ә: 'a', ғ: 'g', қ: 'q', ң: 'n', ө: 'o', ұ: 'u', ү: 'u', һ: 'h', і: 'i' };
+export function challengeSlug(title) {
+  const base = String(title || '').toLowerCase().split('').map(ch => TRANSLIT[ch] ?? ch).join('')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  return base || 'sprint';
+}
 export function referralAttribution(teams) {
   const validIds = new Set(teams.map(t => t.schoolId));
   return teams.filter(t => t.referredBySchoolId && t.referredBySchoolId !== t.schoolId && validIds.has(t.referredBySchoolId)).length;
