@@ -46,6 +46,60 @@ export function funnelModel({ users = 96000, teamSize = 2, activation = 80, comp
   const approved = submitted * approval / 100;
   return { teams: Math.round(teams), started: Math.round(started), completed: Math.round(completed), submitted: Math.round(submitted), approved: Math.round(approved), total: Math.round(approved + baseline), conversion: users ? approved / users * 100 : 0 };
 }
+// Reverse funnel against a fixed calendar deadline. The bottleneck is school onboarding
+// throughput, not the funnel percentages: you cannot convert schools you never signed.
+export function deadlineModel({
+  now = new Date(), deadline = '2026-12-31', baseline = 567, target = 10000,
+  teamSize = 2, activation = 80, completion = 60, publication = 65, approval = 90,
+  sprintDays = 7, onboardingDays = 14, teamsPerSchool = 6, schoolsPerWeek = 10,
+  schoolsPerCoordinator = 25, reviewsPerModeratorWeek = 150
+} = {}) {
+  const end = new Date(`${deadline}T23:59:59Z`).getTime();
+  const start = new Date(now).getTime();
+  if (!Number.isFinite(end) || !Number.isFinite(start)) throw new RangeError('now and deadline must be valid dates');
+  for (const [name, value] of Object.entries({ teamSize, sprintDays, teamsPerSchool, schoolsPerCoordinator, reviewsPerModeratorWeek })) {
+    if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be a positive finite number`);
+  }
+  if (approval <= 0 || approval > 100) throw new RangeError('approval must be in (0, 100]');
+  const daysLeft = Math.max(0, Math.ceil((end - start) / 86400000));
+  const weeksLeft = daysLeft / 7;
+  const onboardingWeeks = Math.max(0, (daysLeft - onboardingDays) / 7);
+  const waves = Math.max(0, Math.floor((daysLeft - onboardingDays) / sprintDays));
+  const teamConversion = (activation / 100) * (completion / 100) * (publication / 100) * (approval / 100);
+  const requiredApproved = Math.max(0, target - baseline);
+  const requiredTeams = teamConversion > 0 ? Math.ceil(requiredApproved / teamConversion) : null;
+  const requiredSchools = requiredTeams === null ? null : Math.ceil(requiredTeams / teamsPerSchool);
+  const requiredReviews = Math.ceil(requiredApproved / (approval / 100));
+  const capacitySchools = Math.floor(schoolsPerWeek * onboardingWeeks);
+  const capacityTeams = capacitySchools * teamsPerSchool;
+  const capacityApproved = Math.floor(capacityTeams * teamConversion);
+  const weeksForReview = Math.max(weeksLeft, 1 / 7);
+  const round = (value, digits = 1) => value === null ? null : +value.toFixed(digits);
+  const requiredSchoolsPerWeek = requiredSchools === null || onboardingWeeks <= 0 ? null : requiredSchools / onboardingWeeks;
+  const gap = Math.max(0, requiredApproved - capacityApproved);
+  const shareOfGoal = requiredApproved ? capacityApproved / requiredApproved * 100 : 100;
+  // No full sprint fits before the deadline => nothing can be verified in time, whatever the funnel says.
+  const verdict = waves < 1 ? 'no_time' : capacityApproved >= requiredApproved ? 'reachable' : shareOfGoal >= 60 ? 'at_risk' : 'unreachable';
+  return {
+    deadline, daysLeft, weeksLeft: round(weeksLeft), onboardingWeeks: round(onboardingWeeks), waves,
+    teamConversion: round(teamConversion * 100, 2),
+    required: {
+      approved: requiredApproved, teams: requiredTeams, users: requiredTeams === null ? null : Math.ceil(requiredTeams * teamSize),
+      schools: requiredSchools, schoolsPerWeek: round(requiredSchoolsPerWeek), reviews: requiredReviews,
+      coordinators: requiredSchools === null ? null : Math.ceil(requiredSchools / schoolsPerCoordinator),
+      moderators: Math.ceil(requiredReviews / (reviewsPerModeratorWeek * weeksForReview))
+    },
+    capacity: {
+      schools: capacitySchools, teams: capacityTeams, approved: capacityApproved, total: capacityApproved + baseline,
+      shareOfGoal: round(shareOfGoal), reviews: Math.ceil(capacityApproved / (approval / 100)),
+      coordinators: Math.ceil(capacitySchools / schoolsPerCoordinator),
+      moderators: Math.ceil(Math.ceil(capacityApproved / (approval / 100)) / (reviewsPerModeratorWeek * weeksForReview))
+    },
+    gapApproved: gap,
+    onboardingMultiple: requiredSchoolsPerWeek === null ? null : round(requiredSchoolsPerWeek / schoolsPerWeek),
+    verdict
+  };
+}
 export function safeCsvCell(value) {
   let text = String(value ?? '');
   if (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = `'${text}`;

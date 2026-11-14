@@ -3,7 +3,7 @@ import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypt
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { COUNTRIES, CATEGORIES, STEPS, REMINDER_PRESETS, cleanText, countryName, normalizePassportUrl, safeCsvCell, attentionReason, challengeSlug, median, hoursBetween } from './lib.js';
-import { resetDemoData, DEMO_CHALLENGE_ID } from './db.js';
+import { resetDemoData, uniqueVerificationCode, DEMO_CHALLENGE_ID } from './db.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
@@ -79,6 +79,7 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     const submission = db.prepare('SELECT * FROM submissions WHERE team_id=? ORDER BY updated_at DESC LIMIT 1').get(teamId) || null;
     return {
       id: t.id, name: t.name, nickname: t.nickname, createdAt: t.created_at, startedAt: t.started_at,
+      verificationCode: t.verification_code,
       isDemo: Boolean(t.school_is_demo), referredBySchoolId: t.referred_by_school_id,
       school: { id: t.school_id, name: t.school_name, city: t.school_city, countryCode: t.country_code, countryName: countryName(t.country_code), isDemo: Boolean(t.school_is_demo) },
       challenge: { id: t.challenge_id, title: t.challenge_title, endsAt: t.ends_at },
@@ -115,14 +116,14 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     if (!includeDemo) conditions.push('s.is_demo=0');
     if (challengeId) { conditions.push('t.challenge_id=?'); scopeParams.push(challengeId); }
     const filter = conditions.length ? ` WHERE ${conditions.join(' AND ')} ` : '';
-    const teams = db.prepare(`SELECT t.id, t.name, t.nickname, t.created_at, t.started_at, t.referred_by_school_id, s.name school_name, s.id school_id, s.country_code, s.is_demo,
+    const teams = db.prepare(`SELECT t.id, t.name, t.nickname, t.created_at, t.started_at, t.referred_by_school_id, t.verification_code, s.name school_name, s.id school_id, s.country_code, s.is_demo,
       (SELECT COUNT(*) FROM steps st WHERE st.team_id=t.id) steps_completed,
       sub.id submission_id, sub.title submission_title, sub.status submission_status, sub.is_demo submission_is_demo
       FROM teams t JOIN schools s ON s.id=t.school_id LEFT JOIN submissions sub ON sub.id=(SELECT id FROM submissions WHERE team_id=t.id ORDER BY updated_at DESC LIMIT 1) ${filter} ORDER BY t.created_at DESC, t.name`).all(...scopeParams)
       .map(r => ({ ...r, is_demo: Boolean(r.is_demo), countryName: countryName(r.country_code), submissionIsDemo: Boolean(r.submission_is_demo) }));
     const teamIds = new Set(teams.map(t => t.id));
-    const pending = db.prepare(`SELECT sub.*, t.name team_name, s.name school_name, s.country_code FROM submissions sub JOIN teams t ON t.id=sub.team_id JOIN schools s ON s.id=t.school_id WHERE sub.status='pending' ORDER BY sub.created_at ASC`).all()
-      .filter(r => teamIds.has(r.team_id)).map(r => ({ ...r, is_demo: Boolean(r.is_demo), countryName: countryName(r.country_code), steps: db.prepare('SELECT step_index FROM steps WHERE team_id=?').all(r.team_id).map(s => s.step_index), workbook: db.prepare('SELECT step_index, content FROM workbook WHERE team_id=?').all(r.team_id) }));
+    const pending = db.prepare(`SELECT sub.*, t.name team_name, t.verification_code, s.name school_name, s.country_code, s.is_demo school_is_demo FROM submissions sub JOIN teams t ON t.id=sub.team_id JOIN schools s ON s.id=t.school_id WHERE sub.status='pending' ORDER BY sub.created_at ASC`).all()
+      .filter(r => teamIds.has(r.team_id)).map(r => ({ ...r, is_demo: Boolean(r.is_demo), schoolIsDemo: Boolean(r.school_is_demo), countryName: countryName(r.country_code), steps: db.prepare('SELECT step_index FROM steps WHERE team_id=?').all(r.team_id).map(s => s.step_index), workbook: db.prepare('SELECT step_index, content FROM workbook WHERE team_id=?').all(r.team_id) }));
     const funnel = { total: teams.length, started: teams.filter(t => t.started_at).length, submitted: teams.filter(t => t.submission_id).length, approved: teams.filter(t => t.submission_status === 'approved').length, pending: pending.length, returned: teams.filter(t => t.submission_status === 'returned').length };
     funnel.conversion = funnel.total ? +(funnel.approved / funnel.total * 100).toFixed(1) : 0;
     const validSchools = new Set(teams.map(t => t.school_id));
@@ -201,7 +202,7 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     db.prepare('UPDATE schools SET access_hash=?, coordinator_name=? WHERE id=?').run(hash(key), cleanText(coordinatorName, 60), schoolId);
     return key;
   }
-  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint', version: '0.3.0' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint', version: '0.4.0' }));
   app.get('/api/bootstrap', (req, res) => {
     const selected = req.query.challenge ? resolveChallenge(req.query.challenge) : activeChallenge();
     if (req.query.challenge && !selected) return fail(res, 404, 'Сезон не найден или закрыт.');
@@ -284,8 +285,8 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
       if (!school) { const schoolId = id('school'); db.prepare('INSERT INTO schools (id, name, normalized_name, country_code, city, is_demo) VALUES (?, ?, ?, ?, ?, 0)').run(schoolId, f.schoolName, normalized, f.countryCode, f.city); school = { id: schoolId }; }
       if (db.prepare('SELECT id FROM teams WHERE challenge_id=? AND school_id=? AND normalized_name=?').get(challenge.id, school.id, f.teamName.toLowerCase())) { db.exec('ROLLBACK'); return fail(res, 409, 'Команда с таким названием уже есть. Войдите по ключу восстановления.'); }
       teamId = id('team');
-      db.prepare('INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, access_hash, consent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)')
-        .run(teamId, challenge.id, school.id, f.teamName, f.teamName.toLowerCase(), f.nickname, from, now(), hash(recoveryKey), now());
+      db.prepare('INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, access_hash, consent_at, verification_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)')
+        .run(teamId, challenge.id, school.id, f.teamName, f.teamName.toLowerCase(), f.nickname, from, now(), hash(recoveryKey), now(), uniqueVerificationCode(db));
       record(teamId, 'team_created');
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -361,8 +362,8 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     try {
       if (team.submission?.status === 'returned') db.prepare("UPDATE submissions SET title=?, url=?, normalized_url=?, description=?, category=?, status='pending', review_comment='', review_checklist='{}', updated_at=?, reviewed_at=NULL WHERE id=?")
         .run(title, normalized.url, normalized.url, description, category, now(), team.submission.id);
-      else db.prepare("INSERT INTO submissions (id, team_id, challenge_id, title, url, normalized_url, description, status, created_at, updated_at, category) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
-        .run(id('sub'), team.id, team.challenge.id, title, normalized.url, normalized.url, description, now(), now(), category);
+      else db.prepare("INSERT INTO submissions (id, team_id, challenge_id, title, url, normalized_url, description, status, created_at, updated_at, category, is_demo) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
+        .run(id('sub'), team.id, team.challenge.id, title, normalized.url, normalized.url, description, now(), now(), category, team.isDemo ? 1 : 0);
       record(team.id, team.submission?.status === 'returned' ? 'project_resubmitted' : 'project_submitted');
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); if (String(error.message).includes('UNIQUE')) return fail(res, 409, 'Этот паспорт уже используется.'); throw error; }
@@ -475,7 +476,7 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     const scope = req.query.challenge ? resolveChallenge(req.query.challenge) : null;
     if (req.query.challenge && !scope) return fail(res, 404, 'Сезон не найден или закрыт.');
     const data = organizerData(req.query.includeDemo !== 'false', scope?.id || null);
-    const rows = [['Команда', 'Школа', 'Страна', 'Этапы', 'Статус', 'Демо', 'Создана', 'Нужна помощь'], ...data.teams.map(t => [t.name, t.school_name, t.countryName, t.steps_completed, t.submission_status || 'new', t.is_demo ? 'да' : 'нет', t.created_at, data.attention.find(a => a.id === t.id)?.reason.label || ''])];
+    const rows = [['Команда', 'Школа', 'Страна', 'Этапы', 'Статус', 'Демо', 'Создана', 'Нужна помощь', 'Код владения'], ...data.teams.map(t => [t.name, t.school_name, t.countryName, t.steps_completed, t.submission_status || 'new', t.is_demo ? 'да' : 'нет', t.created_at, data.attention.find(a => a.id === t.id)?.reason.label || '', t.verification_code || ''])];
     res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="startify-funnel.csv"'); res.send('\uFEFF' + rows.map(r => r.map(safeCsvCell).join(',')).join('\r\n'));
   });
   app.post('/api/organizer/llm/test', requireOrganizer, asyncRoute(async (_req, res) => {
@@ -491,11 +492,14 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     if (!['approve', 'return'].includes(decision)) return fail(res, 400, 'Неизвестное решение.');
     if (decision === 'return' && comment.length < 3) return fail(res, 400, 'Объясните, что нужно доработать.');
     const checklist = req.body?.checklist;
-    if (decision === 'approve' && (!checklist || ['accessible', 'original', 'safe', 'complete'].some(k => checklist[k] !== true))) return fail(res, 400, 'Подтвердите все четыре пункта ручной проверки.');
+    const owner = db.prepare('SELECT s.is_demo FROM teams t JOIN schools s ON s.id=t.school_id WHERE t.id=?').get(sub.team_id);
+    // A demo passport does not exist, so ownership cannot be proven for it; a real one must carry the team code.
+    const required = ['accessible', 'original', 'safe', 'complete', ...(owner?.is_demo ? [] : ['ownership'])];
+    if (decision === 'approve' && (!checklist || required.some(k => checklist[k] !== true))) return fail(res, 400, owner?.is_demo ? 'Подтвердите все четыре пункта ручной проверки.' : 'Подтвердите все пункты проверки, включая код команды в паспорте.');
     db.exec('BEGIN IMMEDIATE');
     try {
       if (db.prepare('SELECT status FROM submissions WHERE id=?').get(sub.id).status !== 'pending') { db.exec('ROLLBACK'); return fail(res, 409, 'Заявка уже проверена.'); }
-      db.prepare('UPDATE submissions SET status=?, review_comment=?, review_checklist=?, reviewed_at=?, updated_at=? WHERE id=?').run(decision === 'approve' ? 'approved' : 'returned', comment, JSON.stringify(decision === 'approve' ? checklist : {}), now(), now(), sub.id);
+      db.prepare('UPDATE submissions SET status=?, review_comment=?, review_checklist=?, reviewed_at=?, updated_at=? WHERE id=?').run(decision === 'approve' ? 'approved' : 'returned', comment, JSON.stringify(decision === 'approve' ? Object.fromEntries(required.map(k => [k, true])) : {}), now(), now(), sub.id);
       record(sub.team_id, decision === 'approve' ? 'project_approved' : 'project_returned');
       if (decision === 'approve') db.prepare('INSERT OR IGNORE INTO steps VALUES (?, 5, ?)').run(sub.team_id, now());
       else db.prepare('DELETE FROM steps WHERE team_id=? AND step_index=5').run(sub.team_id);

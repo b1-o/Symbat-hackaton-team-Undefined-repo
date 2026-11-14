@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import Teacher from '../../src/pages/Teacher.jsx';
 import Organizer from '../../src/pages/Organizer.jsx';
 import Incubator from '../../src/pages/Incubator.jsx';
+import Strategy from '../../src/pages/Strategy.jsx';
 
 const iso = new Date().toISOString();
 const steps = [1, 2, 3, 4, 5].map(i => ({ index: i, title: `Этап ${i}`, short: 'Шаг', description: 'Описание', prompt: 'Вопрос наставника', example: 'Пример', icon: 'lightbulb', completed: i < 3, content: 'Сохранённые заметки', updatedAt: iso }));
@@ -31,7 +32,7 @@ const cabinet = {
 const organizerPayload = {
   funnel: { total: 6, started: 5, submitted: 4, approved: 2, pending: 2, returned: 0, conversion: 33.3 },
   teams: [{ id: 'team-eduquest', name: 'EduQuest', nickname: 'Данияр', school_name: 'Демо-лицей №1', countryName: 'Казахстан', steps_completed: 4, submission_status: null, is_demo: true, created_at: iso }],
-  pending: [], includeDemo: true, challengeId: null,
+  pending: [{ id: 'sub-live', title: 'LostFound', url: 'https://aistartify.com/startup/live-test', description: 'Реальный пилотный проект школы.', team_name: 'Orbit Lab', school_name: 'Pilot School', countryName: 'Казахстан', is_demo: false, schoolIsDemo: false, verification_code: 'SS-ABCD2345', steps: [1, 2, 3, 4], workbook: [{ step_index: 1, content: 'Заметки команды' }], created_at: iso }], includeDemo: true, challengeId: null,
   attention: [{ id: 'team-eduquest', name: 'EduQuest', schoolName: 'Демо-лицей №1', isDemo: true, stepsCompleted: 4, reason: { code: 'ready', label: 'Готовы опубликовать паспорт', tone: 'purple', priority: 2 } }],
   referrals: 2, referralsApproved: 0,
   usage: { requests: 0, llm_success: 0, prompt_tokens: 0, completion_tokens: 0, latency_ms: null },
@@ -43,7 +44,7 @@ const schoolsPayload = { schools: [{ id: 'school-kz-demo', name: 'Демо-ли�
 const team = {
   id: 'team-eduquest', name: 'EduQuest', nickname: 'Данияр', isDemo: true, xp: 200, nextStep: 3, createdAt: iso,
   school: { id: 'school-kz-demo', name: 'Демо-лицей №1', countryName: 'Казахстан', countryCode: 'KZ' },
-  challenge: { id: challenge.id, title: challenge.title, endsAt: iso }, steps, submission: null,
+  challenge: { id: challenge.id, title: challenge.title, endsAt: iso }, steps, submission: null, verificationCode: 'SS-EDUQ2345',
   reminders: [{ id: 'r1', message: 'Проверьте этап интервью и запишите выводы.', authorRole: 'teacher', createdAt: iso, readAt: null }]
 };
 
@@ -94,12 +95,40 @@ export async function run() {
   for (const expected of ['Кому помочь сейчас', 'Координаторы школ', 'Сезоны спринта', 'Сбросить демо', 'Открытий приглашений', 'Зимний спринт']) {
     assert.ok(org.text.includes(expected), `organizer cabinet missing "${expected}"`);
   }
+  assert.ok(org.text.includes('SS-ABCD2345'), 'reviewer does not see the expected ownership code');
+  const labels = [...org.host.querySelectorAll('.review-checks label')].map(l => l.textContent);
+  assert.equal(labels.length, 5, 'a real project needs the ownership checkbox on top of the four original ones');
+  assert.ok(labels.some(l => l.includes('SS-ABCD2345')), 'ownership checkbox does not name the code');
+  const approve = [...org.host.querySelectorAll('button')].find(b => b.textContent.includes('Подтвердить публикацию'));
+  assert.ok(approve.disabled, 'approve must stay disabled until every check is ticked');
+  await act(async () => { for (const box of org.host.querySelectorAll('.review-checks input')) { box.click(); } });
+  assert.ok(!approve.disabled, 'approve should unlock once all five checks are ticked');
+
   const issue = [...org.host.querySelectorAll('button')].find(b => b.textContent.includes('Выдать ключ'));
   await act(async () => { issue.click(); });
   assert.ok(calls.some(c => c.url.includes('/coordinator') && c.method === 'POST'), 'coordinator key was not requested');
 
+  const strategy = await mount('strategy', <Strategy {...ctx} me={{ role: 'guest' }} />);
+  const deadlineTab = [...strategy.host.querySelectorAll('[role="tab"]')].find(b => b.textContent.includes('Дедлайн 31.12'));
+  assert.ok(deadlineTab, 'deadline tab is missing');
+  await act(async () => { deadlineTab.click(); });
+  for (const expected of ['дней до дедлайна', 'Недостижимо в этот срок', 'Что должно быть правдой', 'НАШЕ ОБЯЗАТЕЛЬСТВО ДО 31.12', 'ТРЕБУЕТ ЦЕЛЬ', 'ВЫДЕРЖИТ КАНАЛ']) {
+    assert.ok(strategy.host.textContent.includes(expected), `deadline tab missing "${expected}"`);
+  }
+  const national = [...strategy.host.querySelectorAll('.deadline-presets button')].find(b => b.textContent.includes('Национальный'));
+  await act(async () => { national.click(); });
+  assert.ok(strategy.host.textContent.includes('Арифметика сходится'), 'preset did not flip the verdict to reachable');
+  const organic = [...strategy.host.querySelectorAll('.deadline-presets button')].find(b => b.textContent.includes('Органический'));
+  await act(async () => { organic.click(); });
+  assert.ok(strategy.host.textContent.includes('Недостижимо в этот срок'), 'preset did not flip the verdict back');
+
   const incubator = await mount('incubator', <Incubator {...ctx} me={{ role: 'team', team }} />);
   assert.ok(incubator.text.includes('Проверьте этап интервью'), 'team does not see the reminder');
+  const publicationTab = [...incubator.host.querySelectorAll('.workspace-tabs button')].find(b => b.textContent.includes('Этап 5'));
+  assert.ok(publicationTab, 'publication step tab is missing');
+  await act(async () => { publicationTab.click(); });
+  assert.ok(incubator.host.textContent.includes('SS-EDUQ2345'), 'team does not see its own ownership code');
+  assert.ok(incubator.host.textContent.includes('Добавь код команды'), 'publication flow does not explain the ownership step');
   const read = [...incubator.host.querySelectorAll('button')].find(b => b.textContent.includes('Прочитано'));
   await act(async () => { read.click(); });
   assert.ok(calls.some(c => c.url.includes('/api/team/reminders/r1/read')), 'read receipt was not sent');

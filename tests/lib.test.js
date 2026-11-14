@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePassportUrl, cleanText, countryName, funnelModel, safeCsvCell, referralAttribution, projectReadiness, median, hoursBetween, attentionReason, challengeSlug } from '../server/lib.js';
+import { normalizePassportUrl, cleanText, countryName, funnelModel, safeCsvCell, referralAttribution, projectReadiness, median, hoursBetween, attentionReason, challengeSlug, deadlineModel } from '../server/lib.js';
 
 test('normalizePassportUrl accepts canonical AI Startify passport URL', () => {
   const result = normalizePassportUrl('https://aistartify.com/startup/abc-123/');
@@ -75,4 +75,54 @@ test('challenge slug transliterates Cyrillic and stays URL-safe',()=>{
  assert.equal(challengeSlug('№ *** '),'sprint');
  assert.equal(challengeSlug(''),'sprint');
  assert.match(challengeSlug('Қысқы спринт'),/^[a-z0-9-]+$/);
+});
+
+test('deadline model works backwards from the calendar, not from a wish',()=>{
+ const now='2026-11-14T00:00:00Z';
+ const m=deadlineModel({now,schoolsPerWeek:10,teamsPerSchool:6});
+ assert.equal(m.daysLeft,48);assert.equal(m.waves,4);
+ assert.equal(m.required.approved,9433);
+ assert.equal(m.teamConversion,28.08);
+ assert.equal(m.required.teams,33594);            // 9433 / 0.2808, rounded up
+ assert.equal(m.required.users,67188);
+ assert.equal(m.required.schools,5599);
+ assert.equal(m.required.reviews,10482);
+ assert.equal(m.required.coordinators,224);       // 5599 / 25
+ assert.equal(m.required.moderators,11);
+ assert.equal(m.capacity.schools,48);             // 10 schools/week × 4.85 onboarding weeks
+ assert.equal(m.capacity.approved,80);
+ assert.equal(m.gapApproved,9353);
+ assert.equal(m.verdict,'unreachable');
+ assert.ok(m.onboardingMultiple>100,'organic onboarding is two orders of magnitude too slow');
+});
+test('team size changes reach, never the number of published projects',()=>{
+ const now='2026-11-14T00:00:00Z';
+ const pairs=deadlineModel({now,teamSize:2}),triples=deadlineModel({now,teamSize:3});
+ assert.equal(pairs.required.teams,triples.required.teams);
+ assert.equal(pairs.capacity.approved,triples.capacity.approved);
+ assert.ok(triples.required.users>pairs.required.users);
+});
+test('only distribution scale moves the deadline verdict',()=>{
+ const now='2026-11-14T00:00:00Z';
+ const network=deadlineModel({now,schoolsPerWeek:150,teamsPerSchool:12});
+ assert.equal(network.capacity.approved,2453);assert.equal(network.verdict,'unreachable');assert.equal(network.capacity.shareOfGoal,26);
+ const national=deadlineModel({now,schoolsPerWeek:1200,teamsPerSchool:12});
+ assert.equal(national.verdict,'reachable');assert.equal(national.gapApproved,0);
+ assert.ok(national.capacity.coordinators>200&&national.capacity.moderators>20,'scale still needs people, not just software');
+ const risky=deadlineModel({now,schoolsPerWeek:400,teamsPerSchool:12});
+ assert.equal(risky.verdict,'at_risk');
+});
+test('deadline model refuses to promise results with no time left',()=>{
+ const late=deadlineModel({now:'2026-12-28T00:00:00Z',schoolsPerWeek:10000,teamsPerSchool:50});
+ assert.equal(late.waves,0);assert.equal(late.verdict,'no_time');assert.equal(late.capacity.approved,0);
+ const after=deadlineModel({now:'2027-01-05T00:00:00Z'});
+ assert.equal(after.daysLeft,0);assert.equal(after.verdict,'no_time');
+ const done=deadlineModel({now:'2026-11-14T00:00:00Z',baseline:10000});
+ assert.equal(done.required.approved,0);assert.equal(done.verdict,'reachable');
+});
+test('deadline model validates inputs instead of dividing by zero',()=>{
+ for(const bad of [{teamSize:0},{teamsPerSchool:0},{schoolsPerCoordinator:0},{reviewsPerModeratorWeek:0},{sprintDays:0},{approval:0},{approval:101},{deadline:'не дата'}])
+  assert.throws(()=>deadlineModel(bad),RangeError);
+ const zero=deadlineModel({now:'2026-11-14T00:00:00Z',schoolsPerWeek:0});
+ assert.equal(zero.capacity.approved,0);assert.equal(zero.verdict,'unreachable');
 });

@@ -60,6 +60,8 @@ test('v0.2.0 database upgrades in place: teacher role, reminders, invites, data 
   const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'").get().sql;
   assert.match(sql, /'teacher'/);
   assert.ok(columns(db, 'sessions').includes('school_id'));
+  assert.ok(columns(db, 'teams').includes('verification_code'));
+  assert.match(db.prepare('SELECT verification_code FROM teams WHERE id=?').get('team-live').verification_code, /^SS-[A-Z2-9]{8}$/, 'existing teams are backfilled with an ownership code');
   assert.ok(columns(db, 'schools').includes('access_hash'));
   assert.ok(columns(db, 'schools').includes('coordinator_name'));
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='reminders'").get());
