@@ -1,666 +1,303 @@
 import express from 'express';
-import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { resetDemoData, DEMO_SCHOOL_ID, DEMO_TEAM_ID } from './db.js';
-import {
-  COUNTRIES, STEPS, DEFAULT_REMINDER, cleanText, countryName,
-  normalizePassportUrl, median, hoursBetween, attentionReason, challengeSlug
-} from './lib.js';
+import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
+import { rateLimit } from 'express-rate-limit';
+import { z } from 'zod';
+import { COUNTRIES, CATEGORIES, STEPS, cleanText, countryName, normalizePassportUrl, safeCsvCell } from './lib.js';
 
+const hash = value => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
-const newId = (prefix) => `${prefix}-${randomUUID()}`;
+const id = prefix => `${prefix}-${randomUUID()}`;
+const fail = (res, status, message, code) => res.status(status).json({ error: message, ...(code ? { code } : {}) });
+const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const cookieOptions = secure => `Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${secure ? '; Secure' : ''}`;
+function cookie(req, name) {
+  const part = (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith(`${name}=`));
+  return part ? part.slice(name.length + 1) : '';
+}
+function equalSecret(a, b) { return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest()); }
 
-export async function createApp({ db, root = process.cwd(), isProduction = false, frontend = true }) {
+export function createApp({ db, llm, demoMode = true, organizerPassword = '', inviteCode, secureCookies = false, appOrigin = '' }) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '128kb' }));
-
-  function fail(res, status, message) {
-    return res.status(status).json({ error: message });
-  }
-
-  function parseCookies(req) {
-    const header = req.headers.cookie || '';
-    return Object.fromEntries(
-      header.split(';').map((part) => part.trim().split('=')).filter((pair) => pair.length === 2)
-    );
-  }
-
-  function getSession(req) {
-    const token = parseCookies(req).ss_session;
-    if (!token) return null;
-    return db.prepare('SELECT token, role, team_id, school_id FROM sessions WHERE token = ?').get(token) || null;
-  }
-
-  function setSession(res, req, { role, teamId = null, schoolId = null }) {
-    const oldToken = parseCookies(req).ss_session;
-    if (oldToken) db.prepare('DELETE FROM sessions WHERE token = ?').run(oldToken);
-    const token = randomUUID();
-    db.prepare('INSERT INTO sessions (token, role, team_id, school_id, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(token, role, teamId, schoolId, now());
-    res.setHeader('Set-Cookie', `ss_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
-  }
-
-  function resolveChallenge(ref) {
-    if (ref) {
-      const value = cleanText(String(ref), 120);
-      const found = db.prepare('SELECT * FROM challenges WHERE id = ? OR slug = ?').get(value, value);
-      if (found) return found;
-      return null;
+  app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
+      let same = false;
+      try { same = new URL(req.headers.origin).host === req.get('host'); } catch { /* reject malformed origin */ }
+      if (!same && req.headers.origin !== appOrigin) return fail(res, 403, 'Запрос с другого сайта запрещён.');
     }
-    return db.prepare("SELECT * FROM challenges WHERE status = 'active' ORDER BY is_demo DESC, starts_at DESC, id LIMIT 1").get()
-      || db.prepare('SELECT * FROM challenges ORDER BY starts_at DESC, id LIMIT 1').get()
-      || null;
-  }
-
-  function challengeFromRequest(req) {
-    return resolveChallenge(req.query?.challenge || req.body?.challengeId || req.body?.challenge || '');
-  }
-
-  function requireChallenge(req, res, next) {
-    const challenge = challengeFromRequest(req);
-    if (!challenge) return fail(res, 404, 'Челлендж не найден.');
-    req.challenge = challenge;
     next();
+  });
+  app.use(express.json({ limit: '32kb' }));
+  const limiter = (max, windowMs = 60000) => rateLimit({ windowMs, limit: max, standardHeaders: 'draft-8', legacyHeaders: false, validate: { xForwardedForHeader: false }, handler: (_req, res) => fail(res, 429, 'Слишком много запросов. Подождите немного.') });
+  app.use('/api', limiter(300, 60000));
+  const authLimiter = limiter(20, 15 * 60000);
+  const mentorLimiter = limiter(30, 60000);
+  const record = (teamId, type) => db.prepare('INSERT INTO events VALUES (?, ?, ?, ?)').run(id('event'), teamId, type, now());
+  const activeChallenge = () => db.prepare("SELECT * FROM challenges WHERE status = 'active' ORDER BY starts_at DESC LIMIT 1").get();
+  const isOpen = () => { const c = activeChallenge(); return c && new Date(c.starts_at) <= new Date() && new Date(c.ends_at) > new Date(); };
+  const code = () => inviteCode || activeChallenge()?.access_code;
+  function session(req) {
+    const token = cookie(req, 'ss_session');
+    if (!token || token.length > 200) return null;
+    const s = db.prepare('SELECT * FROM sessions WHERE token = ? AND expires_at > ?').get(hash(token), now());
+    return s || null;
   }
-
-  function isOpen(challenge) {
-    return challenge.status === 'active' && new Date(challenge.ends_at).getTime() >= Date.now();
+  function setSession(req, res, role, teamId = null) {
+    const previous = cookie(req, 'ss_session');
+    if (previous) db.prepare('DELETE FROM sessions WHERE token = ?').run(hash(previous));
+    const token = randomBytes(32).toString('base64url');
+    db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?)').run(hash(token), role, teamId, now(), new Date(Date.now() + 86400000).toISOString());
+    res.setHeader('Set-Cookie', `ss_session=${token}; ${cookieOptions(secureCookies)}`);
   }
-
-  function requireTeam(req, res, next) {
-    const session = getSession(req);
-    if (!session || session.role !== 'team' || !session.team_id) return fail(res, 401, 'Войдите как команда.');
-    req.session = session;
-    next();
-  }
-
-  function requireTeacher(req, res, next) {
-    const session = getSession(req);
-    if (!session || session.role !== 'teacher' || !session.school_id) return fail(res, 401, 'Откройте роль учителя.');
-    req.session = session;
-    next();
-  }
-
-  function requireOrganizer(req, res, next) {
-    const session = getSession(req);
-    if (!session || session.role !== 'organizer') return fail(res, 401, 'Откройте роль организатора.');
-    req.session = session;
-    next();
-  }
-
-  function requireStaff(req, res, next) {
-    const session = getSession(req);
-    if (!session || !['teacher', 'organizer'].includes(session.role)) return fail(res, 401, 'Нужна роль учителя или организатора.');
-    if (session.role === 'teacher' && !session.school_id) return fail(res, 401, 'Учитель не привязан к школе.');
-    req.session = session;
-    next();
-  }
-
-  function touchTeam(teamId) {
-    db.prepare('UPDATE teams SET last_activity_at = ? WHERE id = ?').run(now(), teamId);
-  }
-
+  const requireTeam = (req, res, next) => { const s = session(req); if (!s || s.role !== 'team') return fail(res, 401, 'Войдите в команду.'); req.session = s; next(); };
+  const requireOrganizer = (req, res, next) => { const s = session(req); if (!s || s.role !== 'organizer') return fail(res, 401, 'Нужен вход организатора.'); req.session = s; next(); };
   function teamDetail(teamId) {
-    const team = db.prepare(`
-      SELECT t.*, s.name AS school_name, s.city AS school_city, s.country_code, s.is_demo AS school_is_demo,
-             c.title AS challenge_title, c.slug AS challenge_slug, c.ends_at, c.status AS challenge_status, c.is_demo AS challenge_is_demo
-      FROM teams t
-      JOIN schools s ON s.id = t.school_id
-      JOIN challenges c ON c.id = t.challenge_id
-      WHERE t.id = ?
-    `).get(teamId);
-    if (!team) return null;
-
-    const steps = db.prepare('SELECT step_index, completed_at FROM steps WHERE team_id = ? ORDER BY step_index').all(teamId);
-    const submission = db.prepare('SELECT * FROM submissions WHERE team_id = ? ORDER BY updated_at DESC LIMIT 1').get(teamId) || null;
-    const reminders = db.prepare('SELECT id, message, created_by_role, created_at, read_at FROM reminders WHERE team_id = ? AND read_at IS NULL ORDER BY created_at DESC').all(teamId);
-    const completed = steps.map((step) => step.step_index);
-    const nextStep = STEPS.find((step) => !completed.includes(step.index))?.index || 5;
-
+    const t = db.prepare(`SELECT t.*, s.name school_name, s.city school_city, s.country_code, s.is_demo school_is_demo,
+      c.title challenge_title, c.ends_at FROM teams t JOIN schools s ON s.id=t.school_id JOIN challenges c ON c.id=t.challenge_id WHERE t.id=?`).get(teamId);
+    if (!t) return null;
+    const rows = db.prepare('SELECT * FROM steps WHERE team_id=?').all(teamId);
+    const work = db.prepare('SELECT * FROM workbook WHERE team_id=?').all(teamId);
+    const submission = db.prepare('SELECT * FROM submissions WHERE team_id=? ORDER BY updated_at DESC LIMIT 1').get(teamId) || null;
     return {
-      id: team.id,
-      name: team.name,
-      nickname: team.nickname,
-      isDemo: Boolean(team.is_demo),
-      school: {
-        id: team.school_id,
-        name: team.school_name,
-        city: team.school_city,
-        countryCode: team.country_code,
-        countryName: countryName(team.country_code),
-        isDemo: Boolean(team.school_is_demo)
-      },
-      challenge: {
-        id: team.challenge_id,
-        title: team.challenge_title,
-        slug: team.challenge_slug,
-        endsAt: team.ends_at,
-        status: team.challenge_status,
-        isDemo: Boolean(team.challenge_is_demo)
-      },
-      createdAt: team.created_at,
-      startedAt: team.started_at,
-      lastActivityAt: team.last_activity_at,
-      referredBySchoolId: team.referred_by_school_id,
-      steps: STEPS.map((step) => ({ ...step, completed: completed.includes(step.index) })),
-      nextStep,
-      submission,
-      reminders
+      id: t.id, name: t.name, nickname: t.nickname, createdAt: t.created_at, startedAt: t.started_at,
+      isDemo: Boolean(t.school_is_demo), referredBySchoolId: t.referred_by_school_id,
+      school: { id: t.school_id, name: t.school_name, city: t.school_city, countryCode: t.country_code, countryName: countryName(t.country_code), isDemo: Boolean(t.school_is_demo) },
+      challenge: { id: t.challenge_id, title: t.challenge_title, endsAt: t.ends_at },
+      steps: STEPS.map(step => ({ ...step, completed: rows.some(r => r.step_index === step.index), content: work.find(w => w.step_index === step.index)?.content || '', updatedAt: work.find(w => w.step_index === step.index)?.updated_at || null })),
+      nextStep: STEPS.find(step => !rows.some(r => r.step_index === step.index))?.index || 5,
+      submission: submission ? { ...submission, is_demo: Boolean(submission.is_demo) } : null,
+      xp: rows.length * 100
     };
   }
-
-  function leaderboard(challengeId) {
-    const schools = db.prepare(`
-      SELECT s.id, s.name, s.city, s.country_code, s.is_demo,
-             COUNT(DISTINCT t.id) AS teams,
-             COUNT(DISTINCT CASE WHEN sub.status = 'approved' THEN sub.id END) AS verified
-      FROM teams t
-      JOIN schools s ON s.id = t.school_id
-      LEFT JOIN submissions sub ON sub.team_id = t.id AND sub.challenge_id = t.challenge_id
-      WHERE t.challenge_id = ?
-      GROUP BY s.id
-      ORDER BY verified DESC, teams DESC, s.name ASC
-    `).all(challengeId);
-
-    const countries = db.prepare(`
-      SELECT s.country_code,
-             COUNT(DISTINCT s.id) AS schools,
-             COUNT(DISTINCT t.id) AS teams,
-             COUNT(DISTINCT CASE WHEN sub.status = 'approved' THEN sub.id END) AS verified
-      FROM teams t
-      JOIN schools s ON s.id = t.school_id
-      LEFT JOIN submissions sub ON sub.team_id = t.id AND sub.challenge_id = t.challenge_id
-      WHERE t.challenge_id = ?
-      GROUP BY s.country_code
-      ORDER BY verified DESC, teams DESC, s.country_code ASC
-    `).all(challengeId);
-
-    return {
-      schools: schools.map((row, index) => ({ ...row, rank: index + 1, countryName: countryName(row.country_code), isDemo: Boolean(row.is_demo) })),
-      countries: countries.map((row, index) => ({ ...row, rank: index + 1, countryName: countryName(row.country_code) }))
-    };
+  function leaderboard() {
+    const rows = db.prepare(`SELECT s.id, s.name, s.city, s.country_code, s.is_demo,
+      COUNT(DISTINCT t.id) teams, COUNT(DISTINCT CASE WHEN sub.status='approved' THEN sub.id END) verified
+      FROM schools s JOIN teams t ON t.school_id=s.id LEFT JOIN submissions sub ON sub.team_id=t.id
+      ${demoMode ? '' : 'WHERE s.is_demo=0'} GROUP BY s.id ORDER BY verified DESC, teams DESC, s.name ASC`).all();
+    const countries = COUNTRIES.map(c => {
+      const schools = rows.filter(r => r.country_code === c.code);
+      return { country_code: c.code, countryName: c.name, flag: c.flag, schools: schools.length, teams: schools.reduce((n, r) => n + r.teams, 0), verified: schools.reduce((n, r) => n + r.verified, 0) };
+    }).filter(r => r.teams).sort((a, b) => b.verified - a.verified || b.teams - a.teams || a.country_code.localeCompare(b.country_code));
+    return { schools: rows.map((r, i) => ({ ...r, rank: i + 1, countryName: countryName(r.country_code), isDemo: Boolean(r.is_demo) })), countries: countries.map((r, i) => ({ ...r, rank: i + 1 })) };
   }
-
-  function publicProjects(challengeId) {
-    return db.prepare(`
-      SELECT sub.id, sub.title, sub.url, sub.description, sub.is_demo, sub.reviewed_at,
-             t.name AS team_name, s.name AS school_name, s.country_code, s.city
-      FROM submissions sub
-      JOIN teams t ON t.id = sub.team_id
-      JOIN schools s ON s.id = t.school_id
-      WHERE sub.status = 'approved' AND sub.challenge_id = ?
-      ORDER BY sub.reviewed_at DESC, sub.created_at DESC
-      LIMIT 12
-    `).all(challengeId).map((row) => ({ ...row, isDemo: Boolean(row.is_demo), countryName: countryName(row.country_code) }));
+  function projects() {
+    return db.prepare(`SELECT sub.id, sub.title, sub.url, sub.description, sub.is_demo, sub.reviewed_at, sub.category,
+      t.name team_name, s.name school_name, s.country_code, s.city FROM submissions sub JOIN teams t ON t.id=sub.team_id
+      JOIN schools s ON s.id=t.school_id WHERE sub.status='approved' ${demoMode ? '' : 'AND s.is_demo=0'} ORDER BY sub.reviewed_at DESC, sub.id ASC`).all()
+      .map(r => ({ ...r, is_demo: Boolean(r.is_demo), countryName: countryName(r.country_code) }));
   }
-
-  function stats(challengeId) {
-    return db.prepare(`
-      SELECT
-        COUNT(DISTINCT t.id) AS teams,
-        COUNT(DISTINCT t.school_id) AS schools,
-        COUNT(DISTINCT s.country_code) AS countries,
-        COUNT(DISTINCT CASE WHEN sub.status = 'approved' THEN sub.id END) AS verified
-      FROM teams t
-      JOIN schools s ON s.id = t.school_id
-      LEFT JOIN submissions sub ON sub.team_id = t.id AND sub.challenge_id = t.challenge_id
-      WHERE t.challenge_id = ?
-    `).get(challengeId);
+  function organizerData(includeDemo = true) {
+    const filter = includeDemo ? '' : ' WHERE s.is_demo=0 ';
+    const teams = db.prepare(`SELECT t.id, t.name, t.nickname, t.created_at, t.started_at, t.referred_by_school_id, s.name school_name, s.id school_id, s.country_code, s.is_demo,
+      (SELECT COUNT(*) FROM steps st WHERE st.team_id=t.id) steps_completed,
+      sub.id submission_id, sub.title submission_title, sub.status submission_status, sub.is_demo submission_is_demo
+      FROM teams t JOIN schools s ON s.id=t.school_id LEFT JOIN submissions sub ON sub.id=(SELECT id FROM submissions WHERE team_id=t.id ORDER BY updated_at DESC LIMIT 1) ${filter} ORDER BY t.created_at DESC, t.name`).all()
+      .map(r => ({ ...r, is_demo: Boolean(r.is_demo), countryName: countryName(r.country_code), submissionIsDemo: Boolean(r.submission_is_demo) }));
+    const teamIds = new Set(teams.map(t => t.id));
+    const pending = db.prepare(`SELECT sub.*, t.name team_name, s.name school_name, s.country_code FROM submissions sub JOIN teams t ON t.id=sub.team_id JOIN schools s ON s.id=t.school_id WHERE sub.status='pending' ORDER BY sub.created_at ASC`).all()
+      .filter(r => teamIds.has(r.team_id)).map(r => ({ ...r, is_demo: Boolean(r.is_demo), countryName: countryName(r.country_code), steps: db.prepare('SELECT step_index FROM steps WHERE team_id=?').all(r.team_id).map(s => s.step_index), workbook: db.prepare('SELECT step_index, content FROM workbook WHERE team_id=?').all(r.team_id) }));
+    const funnel = { total: teams.length, started: teams.filter(t => t.started_at).length, submitted: teams.filter(t => t.submission_id).length, approved: teams.filter(t => t.submission_status === 'approved').length, pending: pending.length, returned: teams.filter(t => t.submission_status === 'returned').length };
+    funnel.conversion = funnel.total ? +(funnel.approved / funnel.total * 100).toFixed(1) : 0;
+    const validSchools = new Set(teams.map(t => t.school_id));
+    const referred = teams.filter(t => t.referred_by_school_id && t.referred_by_school_id !== t.school_id && validSchools.has(t.referred_by_school_id));
+    const referrals = referred.length;
+    const referralsApproved = referred.filter(t => t.submission_status === 'approved').length;
+    const usage = db.prepare(`SELECT COUNT(*) requests, SUM(CASE WHEN status='ok' AND source='llm' THEN 1 ELSE 0 END) llm_success,
+      SUM(prompt_tokens) prompt_tokens, SUM(completion_tokens) completion_tokens, AVG(CASE WHEN source='llm' AND status='ok' THEN latency_ms END) latency_ms FROM llm_calls ${includeDemo ? '' : 'WHERE team_id IN (SELECT t.id FROM teams t JOIN schools s ON s.id=t.school_id WHERE s.is_demo=0)'}`).get();
+    const events = db.prepare(`SELECT e.team_id, e.type, e.created_at FROM events e JOIN teams t ON t.id=e.team_id JOIN schools s ON s.id=t.school_id ${includeDemo ? '' : 'WHERE s.is_demo=0'} ORDER BY e.created_at`).all();
+    const created = new Map(events.filter(e => e.type === 'team_created').map(e => [e.team_id, new Date(e.created_at).getTime()]));
+    const firstValues = events.filter(e => e.type === 'first_note' && created.has(e.team_id)).map(e => (new Date(e.created_at).getTime() - created.get(e.team_id)) / 60000).filter(n => n >= 0).sort((a,b) => a-b);
+    const medianFirstValueMinutes = firstValues.length ? (firstValues[Math.floor((firstValues.length - 1) / 2)] + firstValues[Math.floor(firstValues.length / 2)]) / 2 : null;
+    const firstNotes = new Map(events.filter(e => e.type === 'first_note').map(e => [e.team_id, new Date(e.created_at).getTime()]));
+    const matureCohorts = [...firstNotes].filter(([,time]) => time <= Date.now() - 8 * 86400000);
+    const returnedD7 = matureCohorts.filter(([teamId,time]) => events.some(e => e.team_id === teamId && e.type === 'activity' && new Date(e.created_at).getTime() - time >= 6 * 86400000 && new Date(e.created_at).getTime() - time <= 8 * 86400000)).length;
+    return { funnel, teams, pending, referrals, referralsApproved, includeDemo, usage, activation: { medianFirstValueMinutes, measuredTeams: firstValues.length, d7Eligible: matureCohorts.length, d7Returned: returnedD7, d7Percent: matureCohorts.length ? +(returnedD7 / matureCohorts.length * 100).toFixed(1) : null } };
   }
-
-  function bootstrap(challenge) {
-    if (!challenge) return null;
-    return {
-      challenge,
-      challenges: db.prepare('SELECT id, slug, title, status, is_demo, starts_at, ends_at FROM challenges ORDER BY is_demo DESC, starts_at DESC, id').all(),
-      countries: COUNTRIES,
-      steps: STEPS,
-      stats: stats(challenge.id),
-      leaderboard: leaderboard(challenge.id),
-      projects: publicProjects(challenge.id),
-      schools: db.prepare('SELECT id, name, city, country_code, is_demo FROM schools WHERE is_demo = ? ORDER BY name').all(challenge.is_demo),
-      demoTeams: challenge.is_demo ? db.prepare(`
-        SELECT t.id, t.name, s.name AS school_name, s.country_code
-        FROM teams t JOIN schools s ON s.id = t.school_id
-        WHERE t.challenge_id = ? AND t.is_demo = 1
-        ORDER BY t.name
-      `).all(challenge.id) : []
-    };
-  }
-
-  function teamRows(challengeId, schoolId = null) {
-    const sql = `
-      SELECT t.id, t.name, t.nickname, t.created_at, t.started_at, t.last_activity_at, t.is_demo,
-             s.id AS school_id, s.name AS school_name, s.city, s.country_code,
-             (SELECT COUNT(*) FROM steps st WHERE st.team_id = t.id) AS steps_completed,
-             sub.id AS submission_id, sub.title AS submission_title, sub.url AS submission_url,
-             sub.status AS submission_status, sub.review_comment, sub.is_demo AS submission_is_demo,
-             (SELECT COUNT(*) FROM reminders r WHERE r.team_id = t.id) AS reminders_sent,
-             (SELECT COUNT(*) FROM reminders r WHERE r.team_id = t.id AND r.read_at IS NULL) AS reminders_unread
-      FROM teams t
-      JOIN schools s ON s.id = t.school_id
-      LEFT JOIN submissions sub ON sub.id = (
-        SELECT id FROM submissions WHERE team_id = t.id ORDER BY updated_at DESC LIMIT 1
-      )
-      WHERE t.challenge_id = ?
-      ${schoolId ? 'AND t.school_id = ?' : ''}
-      ORDER BY t.created_at DESC, t.name ASC
-    `;
-    const rows = schoolId ? db.prepare(sql).all(challengeId, schoolId) : db.prepare(sql).all(challengeId);
-    return rows.map((row) => {
-      const mapped = { ...row, countryName: countryName(row.country_code), isDemo: Boolean(row.is_demo), submissionIsDemo: Boolean(row.submission_is_demo) };
-      mapped.attentionReason = attentionReason(mapped);
-      return mapped;
-    });
-  }
-
-  function funnelFor(challengeId, schoolId = null) {
-    const where = schoolId ? 'WHERE challenge_id = ? AND school_id = ?' : 'WHERE challenge_id = ?';
-    const args = schoolId ? [challengeId, schoolId] : [challengeId];
-    const teamFunnel = db.prepare(`
-      SELECT COUNT(*) AS total,
-             SUM(CASE WHEN started_at IS NOT NULL THEN 1 ELSE 0 END) AS started
-      FROM teams ${where}
-    `).get(...args);
-    const subWhere = schoolId
-      ? 'WHERE sub.challenge_id = ? AND t.school_id = ?'
-      : 'WHERE sub.challenge_id = ?';
-    const subArgs = schoolId ? [challengeId, schoolId] : [challengeId];
-    const subFunnel = db.prepare(`
-      SELECT COUNT(DISTINCT sub.team_id) AS submitted,
-             SUM(CASE WHEN sub.status = 'approved' THEN 1 ELSE 0 END) AS approved,
-             SUM(CASE WHEN sub.status = 'pending' THEN 1 ELSE 0 END) AS pending,
-             SUM(CASE WHEN sub.status = 'returned' THEN 1 ELSE 0 END) AS returned
-      FROM submissions sub JOIN teams t ON t.id = sub.team_id ${subWhere}
-    `).get(...subArgs);
-    const total = teamFunnel.total || 0;
-    const approved = subFunnel.approved || 0;
-    const durations = db.prepare(`
-      SELECT t.created_at, sub.reviewed_at
-      FROM submissions sub JOIN teams t ON t.id = sub.team_id
-      WHERE sub.status = 'approved' AND sub.challenge_id = ? ${schoolId ? 'AND t.school_id = ?' : ''}
-    `).all(...subArgs).map((row) => hoursBetween(row.created_at, row.reviewed_at)).filter((value) => value !== null);
-    return {
-      total,
-      started: teamFunnel.started || 0,
-      submitted: subFunnel.submitted || 0,
-      approved,
-      pending: subFunnel.pending || 0,
-      returned: subFunnel.returned || 0,
-      conversion: total ? Math.round((approved / total) * 100) : 0,
-      medianHoursToPublish: median(durations)
-    };
-  }
-
-  function growthFor(challengeId, schoolId = null) {
-    const clicks = schoolId
-      ? db.prepare('SELECT COUNT(*) AS c FROM invite_clicks WHERE challenge_id = ? AND from_school_id = ?').get(challengeId, schoolId).c
-      : db.prepare('SELECT COUNT(*) AS c FROM invite_clicks WHERE challenge_id = ?').get(challengeId).c;
-    const referredTeams = schoolId
-      ? db.prepare('SELECT COUNT(*) AS c FROM teams WHERE challenge_id = ? AND referred_by_school_id = ?').get(challengeId, schoolId).c
-      : db.prepare('SELECT COUNT(*) AS c FROM teams WHERE challenge_id = ? AND referred_by_school_id IS NOT NULL').get(challengeId).c;
-    const referredApproved = schoolId
-      ? db.prepare(`
-          SELECT COUNT(*) AS c FROM teams t JOIN submissions sub ON sub.team_id = t.id
-          WHERE t.challenge_id = ? AND t.referred_by_school_id = ? AND sub.status = 'approved'
-        `).get(challengeId, schoolId).c
-      : db.prepare(`
-          SELECT COUNT(*) AS c FROM teams t JOIN submissions sub ON sub.team_id = t.id
-          WHERE t.challenge_id = ? AND t.referred_by_school_id IS NOT NULL AND sub.status = 'approved'
-        `).get(challengeId).c;
-    const reminders = schoolId
-      ? db.prepare('SELECT COUNT(*) AS c FROM reminders WHERE challenge_id = ? AND school_id = ?').get(challengeId, schoolId).c
-      : db.prepare('SELECT COUNT(*) AS c FROM reminders WHERE challenge_id = ?').get(challengeId).c;
-    return { inviteClicks: clicks, referredTeams, referredApproved, remindersSent: reminders };
-  }
-
-  function pendingFor(challengeId, schoolId = null) {
-    const sql = `
-      SELECT sub.*, t.name AS team_name, s.name AS school_name, s.country_code, s.city
-      FROM submissions sub
-      JOIN teams t ON t.id = sub.team_id
-      JOIN schools s ON s.id = t.school_id
-      WHERE sub.status = 'pending' AND sub.challenge_id = ?
-      ${schoolId ? 'AND t.school_id = ?' : ''}
-      ORDER BY sub.created_at ASC
-    `;
-    const rows = schoolId ? db.prepare(sql).all(challengeId, schoolId) : db.prepare(sql).all(challengeId);
-    return rows.map((row) => ({ ...row, isDemo: Boolean(row.is_demo), countryName: countryName(row.country_code) }));
-  }
-
-  function organizerData(challenge) {
-    const teams = teamRows(challenge.id);
-    return {
-      challenge,
-      funnel: funnelFor(challenge.id),
-      growth: growthFor(challenge.id),
-      teams,
-      attention: teams.filter((team) => team.attentionReason),
-      pending: pendingFor(challenge.id)
-    };
-  }
-
-  function teacherData(challenge, schoolId) {
-    const school = db.prepare('SELECT * FROM schools WHERE id = ?').get(schoolId);
-    if (!school) return null;
-    const teams = teamRows(challenge.id, schoolId);
-    return {
-      challenge,
-      school: { ...school, countryName: countryName(school.country_code), isDemo: Boolean(school.is_demo) },
-      funnel: funnelFor(challenge.id, schoolId),
-      growth: growthFor(challenge.id, schoolId),
-      teams,
-      attention: teams.filter((team) => team.attentionReason),
-      pending: pendingFor(challenge.id, schoolId)
-    };
-  }
-
-  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint' }));
-
-  app.get('/api/bootstrap', (req, res) => {
-    const challenge = challengeFromRequest(req);
-    if (!challenge) return fail(res, 404, 'Челлендж не найден.');
-    res.json(bootstrap(challenge));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint', version: '0.2.0' }));
+  app.get('/api/bootstrap', (_req, res) => {
+    const c = activeChallenge();
+    const { access_code, ...challenge } = c;
+    const all = organizerData(demoMode);
+    res.json({ challenge: { ...challenge, isOpen: isOpen() }, countries: COUNTRIES, categories: CATEGORIES, steps: STEPS,
+      demoMode, inviteHint: demoMode ? code() : null, llm: llm.publicStatus(),
+      stats: { teams: all.funnel.total, schools: leaderboard().schools.length, countries: leaderboard().countries.length, verified: all.funnel.approved },
+      leaderboard: leaderboard(), projects: projects(), schools: db.prepare(`SELECT id, name, city, country_code, is_demo FROM schools ${demoMode ? '' : 'WHERE is_demo=0'} ORDER BY name`).all(),
+      demoTeams: demoMode ? db.prepare("SELECT t.id, t.name FROM teams t JOIN schools s ON s.id=t.school_id WHERE s.is_demo=1 ORDER BY t.name").all() : [] });
   });
-
-  app.get('/api/me', (req, res) => {
-    const session = getSession(req);
-    if (!session) return res.json({ role: 'guest' });
-    if (session.role === 'organizer') return res.json({ role: 'organizer' });
-    if (session.role === 'teacher') {
-      const school = db.prepare('SELECT id, name, city, country_code, is_demo FROM schools WHERE id = ?').get(session.school_id);
-      if (!school) return res.json({ role: 'guest' });
-      return res.json({ role: 'teacher', school: { ...school, countryName: countryName(school.country_code), isDemo: Boolean(school.is_demo) } });
-    }
-    const team = teamDetail(session.team_id);
-    if (!team) return res.json({ role: 'guest' });
-    return res.json({ role: 'team', team });
-  });
-
-  app.post('/api/demo/login', (req, res) => {
+  app.get('/api/me', (req, res) => { const s = session(req); if (!s) return res.json({ role: 'guest' }); res.json(s.role === 'team' ? { role: 'team', team: teamDetail(s.team_id) } : { role: 'organizer' }); });
+  app.post('/api/demo/login', authLimiter, (req, res) => {
+    if (!demoMode) return fail(res, 404, 'Демо-вход отключён.');
     const role = req.body?.role;
-    if (role === 'organizer') {
-      setSession(res, req, { role: 'organizer' });
-      return res.json({ role: 'organizer' });
-    }
-    if (role === 'teacher') {
-      const schoolId = cleanText(req.body?.schoolId, 120) || DEMO_SCHOOL_ID;
-      const school = db.prepare('SELECT id FROM schools WHERE id = ?').get(schoolId);
-      if (!school) return fail(res, 404, 'Школа не найдена.');
-      setSession(res, req, { role: 'teacher', schoolId: school.id });
-      return res.json({ role: 'teacher' });
-    }
-    if (role === 'team') {
-      const teamId = cleanText(req.body?.teamId, 120) || DEMO_TEAM_ID;
-      const team = db.prepare('SELECT id FROM teams WHERE id = ?').get(teamId);
-      if (!team) return fail(res, 404, 'Демо-команда не найдена.');
-      setSession(res, req, { role: 'team', teamId: team.id });
-      return res.json({ role: 'team', team: teamDetail(team.id) });
-    }
-    return fail(res, 400, 'Неизвестная демо-роль.');
+    if (!['team', 'organizer'].includes(role)) return fail(res, 400, 'Неизвестная роль.');
+    const teamId = role === 'team' ? cleanText(req.body?.teamId, 120) || 'team-eduquest' : null;
+    const team = teamId && db.prepare('SELECT t.id FROM teams t JOIN schools s ON s.id=t.school_id WHERE t.id=? AND s.is_demo=1').get(teamId);
+    if (role === 'team' && !team) return fail(res, 404, 'Демо-команда не найдена.');
+    setSession(req, res, role, teamId);
+    res.json({ role, ...(teamId ? { team: teamDetail(teamId) } : {}) });
   });
-
-  app.post('/api/logout', (req, res) => {
-    const token = parseCookies(req).ss_session;
-    if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-    res.setHeader('Set-Cookie', 'ss_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
-    res.json({ role: 'guest' });
+  app.post('/api/auth/organizer', authLimiter, (req, res) => {
+    if (!organizerPassword) return fail(res, 403, 'Вход организатора не настроен.');
+    const password = req.body?.password;
+    if (typeof password !== 'string' || password.length >200 || !equalSecret(password, organizerPassword)) return fail(res, 401, 'Неверный пароль.');
+    setSession(req, res, 'organizer'); res.json({ role: 'organizer' });
   });
-
-  app.post('/api/demo/reset', requireOrganizer, (_req, res) => {
-    resetDemoData(db);
-    const challenge = resolveChallenge('');
-    res.json({ ok: true, bootstrap: bootstrap(challenge) });
+  app.post('/api/auth/team', authLimiter, (req, res) => {
+    const teamId = cleanText(req.body?.teamId, 120), key = cleanText(req.body?.recoveryKey, 100);
+    const t = db.prepare('SELECT * FROM teams WHERE id=?').get(teamId);
+    if (!t?.access_hash || !equalSecret(hash(key), t.access_hash)) return fail(res, 401, 'Неверный ID команды или ключ восстановления.');
+    setSession(req, res, 'team', t.id); res.json({ role: 'team', team: teamDetail(t.id) });
   });
-
-  app.post('/api/organizer/challenges', requireOrganizer, (req, res) => {
-    const title = cleanText(req.body?.title, 160);
-    const description = cleanText(req.body?.description, 1000);
-    const accessCode = cleanText(req.body?.accessCode, 40).toUpperCase();
-    const startsAt = cleanText(req.body?.startsAt, 40);
-    const endsAt = cleanText(req.body?.endsAt, 40);
-    if (title.length < 5) return fail(res, 400, 'Название челленджа слишком короткое.');
-    if (!/^[A-Z0-9-]{4,40}$/.test(accessCode)) return fail(res, 400, 'Код приглашения: 4–40 символов, буквы/цифры/дефис.');
-    const start = new Date(startsAt);
-    const end = new Date(endsAt);
-    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
-      return fail(res, 400, 'Укажите корректные даты начала и окончания.');
-    }
-    if (db.prepare('SELECT id FROM challenges WHERE access_code = ?').get(accessCode)) {
-      return fail(res, 409, 'Такой код приглашения уже используется.');
-    }
-    let slug = challengeSlug(title);
-    if (db.prepare('SELECT id FROM challenges WHERE slug = ?').get(slug)) slug = `${slug}-${randomUUID().slice(0, 8)}`;
-    const id = newId('challenge');
-    db.prepare(`
-      INSERT INTO challenges (id, slug, title, description, access_code, starts_at, ends_at, status, is_demo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0)
-    `).run(id, slug, title, description || 'Пилотный школьный спринт поверх AI Startify.', accessCode, start.toISOString(), end.toISOString());
-    res.status(201).json({ challenge: db.prepare('SELECT * FROM challenges WHERE id = ?').get(id) });
+  app.post('/api/logout', (req, res) => { const token = cookie(req, 'ss_session'); if (token) db.prepare('DELETE FROM sessions WHERE token=?').run(hash(token)); res.setHeader('Set-Cookie', `ss_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies ? '; Secure' : ''}`); res.json({ role: 'guest' }); });
+  app.post('/api/teams', authLimiter, (req, res) => {
+    if (!isOpen()) return fail(res, 409, 'Спринт ещё не начался или уже завершён.');
+    const input = z.object({ accessCode: z.string().max(80), countryCode: z.enum(COUNTRIES.map(c => c.code)), schoolName: z.string().trim().min(2).max(120), city: z.string().trim().max(80).default(''), teamName: z.string().trim().min(2).max(80), nickname: z.string().trim().min(1).max(60), fromSchoolId: z.string().max(120).nullable().optional(), consent: z.literal(true), ageConfirmed: z.literal(true) }).safeParse(req.body);
+    if (!input.success) return fail(res, 400, 'Заполните поля команды и подтвердите возраст 13+ и правила обработки учебных данных.');
+    const f = input.data;
+    if (!equalSecret(f.accessCode.toUpperCase(), code().toUpperCase())) return fail(res, 400, 'Неверный код приглашения.');
+    const from = f.fromSchoolId && db.prepare('SELECT id FROM schools WHERE id=?').get(f.fromSchoolId) ? f.fromSchoolId : null;
+    const normalized = f.schoolName.toLowerCase();
+    const recoveryKey = randomBytes(18).toString('base64url');
+    let teamId;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      let school = db.prepare('SELECT * FROM schools WHERE country_code=? AND normalized_name=? AND lower(city)=lower(?)').get(f.countryCode, normalized, f.city);
+      if (!school) { const schoolId = id('school'); db.prepare('INSERT INTO schools VALUES (?, ?, ?, ?, ?, 0)').run(schoolId, f.schoolName, normalized, f.countryCode, f.city); school = { id: schoolId }; }
+      if (db.prepare('SELECT id FROM teams WHERE challenge_id=? AND school_id=? AND normalized_name=?').get(activeChallenge().id, school.id, f.teamName.toLowerCase())) { db.exec('ROLLBACK'); return fail(res, 409, 'Команда с таким названием уже есть. Войдите по ключу восстановления.'); }
+      teamId = id('team');
+      db.prepare('INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, access_hash, consent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)')
+        .run(teamId, activeChallenge().id, school.id, f.teamName, f.teamName.toLowerCase(), f.nickname, from, now(), hash(recoveryKey), now());
+      record(teamId, 'team_created');
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    setSession(req, res, 'team', teamId);
+    res.status(201).json({ team: teamDetail(teamId), teamId, recoveryKey });
   });
-
-  app.post('/api/teams', requireChallenge, (req, res) => {
-    const challenge = req.challenge;
-    if (!isOpen(challenge)) return fail(res, 409, 'Челлендж завершён или неактивен.');
-
-    const accessCode = cleanText(req.body?.accessCode, 40).toUpperCase();
-    if (accessCode !== challenge.access_code.toUpperCase()) return fail(res, 400, 'Неверный код приглашения.');
-
-    const countryCode = cleanText(req.body?.countryCode, 2).toUpperCase();
-    if (!COUNTRIES.some((country) => country.code === countryCode)) return fail(res, 400, 'Выберите страну из списка.');
-
-    const schoolName = cleanText(req.body?.schoolName, 120);
-    const city = cleanText(req.body?.city, 80);
-    const teamName = cleanText(req.body?.teamName, 80);
-    const nickname = cleanText(req.body?.nickname, 60);
-    const fromSchoolId = cleanText(req.body?.fromSchoolId, 120) || null;
-
-    if (schoolName.length < 2) return fail(res, 400, 'Укажите название школы.');
-    if (teamName.length < 2) return fail(res, 400, 'Укажите название команды.');
-    if (nickname.length < 1) return fail(res, 400, 'Укажите nickname участника.');
-
-    if (fromSchoolId) {
-      const referrer = db.prepare('SELECT id, is_demo FROM schools WHERE id = ?').get(fromSchoolId);
-      if (!referrer || referrer.is_demo !== challenge.is_demo) return fail(res, 400, 'Школа-приглашающая не найдена в этом челлендже.');
-    }
-
-    const normalizedSchool = schoolName.toLowerCase();
-    const normalizedCity = city.toLowerCase();
-    let school = db.prepare(`
-      SELECT * FROM schools WHERE country_code = ? AND normalized_name = ? AND normalized_city = ? AND is_demo = ?
-    `).get(countryCode, normalizedSchool, normalizedCity, challenge.is_demo);
-
-    if (!school) {
-      const schoolId = newId('school');
-      db.prepare('INSERT INTO schools (id, name, normalized_name, country_code, city, normalized_city, is_demo) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(schoolId, schoolName, normalizedSchool, countryCode, city, normalizedCity, challenge.is_demo);
-      school = { id: schoolId };
-    }
-
-    const normalizedTeam = teamName.toLowerCase();
-    const existingTeam = db.prepare('SELECT id FROM teams WHERE challenge_id = ? AND school_id = ? AND normalized_name = ?')
-      .get(challenge.id, school.id, normalizedTeam);
-    if (existingTeam) return fail(res, 409, 'Такая команда уже есть в этой школе. Выберите другое название.');
-
-    const teamId = newId('team');
-    const timestamp = now();
-    db.prepare(`
-      INSERT INTO teams (id, challenge_id, school_id, name, normalized_name, nickname, referred_by_school_id, created_at, started_at, last_activity_at, is_demo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-    `).run(teamId, challenge.id, school.id, teamName, normalizedTeam, nickname, fromSchoolId, timestamp, timestamp, challenge.is_demo);
-
-    setSession(res, req, { role: 'team', teamId });
-    res.status(201).json({ team: teamDetail(teamId) });
-  });
-
-  app.post('/api/invites/click', requireChallenge, (req, res) => {
-    const fromSchoolId = cleanText(req.body?.fromSchoolId, 120);
-    if (!fromSchoolId) return fail(res, 400, 'Не указана школа-приглашающая.');
-    const school = db.prepare('SELECT id, is_demo FROM schools WHERE id = ?').get(fromSchoolId);
-    if (!school || school.is_demo !== req.challenge.is_demo) return fail(res, 400, 'Школа-приглашающая не найдена.');
-    db.prepare('INSERT INTO invite_clicks (id, challenge_id, from_school_id, created_at) VALUES (?, ?, ?, ?)')
-      .run(newId('click'), req.challenge.id, fromSchoolId, now());
-    res.status(201).json({ ok: true });
-  });
-
-  app.get('/api/team', requireTeam, (req, res) => {
+  app.get('/api/team', requireTeam, (req, res) => res.json({ team: teamDetail(req.session.team_id) }));
+  function saveWork(teamId, stepIndex, content) {
+    const first = !db.prepare("SELECT id FROM events WHERE team_id=? AND type='first_note'").get(teamId);
+    db.prepare('INSERT INTO workbook VALUES (?, ?, ?, ?) ON CONFLICT(team_id, step_index) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at').run(teamId, stepIndex, content, now());
+    db.prepare('UPDATE teams SET started_at=COALESCE(started_at, ?) WHERE id=?').run(now(), teamId);
+    if (first && content.length) { record(teamId, 'first_note'); record(teamId, 'activated'); }
+    record(teamId, 'activity');
+  }
+  app.patch('/api/team/workbook', requireTeam, (req, res) => {
+    const stepIndex = Number(req.body?.stepIndex), content = req.body?.content;
+    if (!Number.isInteger(stepIndex) || stepIndex < 1 || stepIndex > 4 || typeof content !== 'string' || content.length > 5000) return fail(res, 400, 'Некорректные заметки: этап 1–4, до 5000 символов.');
     const team = teamDetail(req.session.team_id);
-    if (!team) return fail(res, 404, 'Команда не найдена.');
-    res.json({ team });
+    if (team.submission && ['pending', 'approved'].includes(team.submission.status)) return fail(res, 409, 'Заметки зафиксированы на время проверки и после зачёта.');
+    saveWork(req.session.team_id, stepIndex, content.trim()); res.json({ team: teamDetail(req.session.team_id) });
   });
-
   app.patch('/api/team/steps', requireTeam, (req, res) => {
-    const team = db.prepare('SELECT t.*, c.ends_at, c.status FROM teams t JOIN challenges c ON c.id = t.challenge_id WHERE t.id = ?').get(req.session.team_id);
-    if (!team) return fail(res, 404, 'Команда не найдена.');
-    if (!isOpen(team)) return fail(res, 409, 'Челлендж завершён или неактивен.');
-    const stepIndex = Number(req.body?.stepIndex);
-    const completed = Boolean(req.body?.completed);
-    if (!Number.isInteger(stepIndex) || stepIndex < 1 || stepIndex > 4) {
-      return fail(res, 400, 'Шаг 5 подтверждается только после проверки проекта организатором.');
-    }
-    const timestamp = now();
-    if (completed) {
-      db.prepare('INSERT OR IGNORE INTO steps (team_id, step_index, completed_at) VALUES (?, ?, ?)').run(team.id, stepIndex, timestamp);
-      db.prepare('UPDATE teams SET started_at = COALESCE(started_at, ?), last_activity_at = ? WHERE id = ?').run(timestamp, timestamp, team.id);
-    } else {
-      db.prepare('DELETE FROM steps WHERE team_id = ? AND step_index = ?').run(team.id, stepIndex);
-      touchTeam(team.id);
-    }
-    res.json({ team: teamDetail(team.id) });
+    const teamId = req.session.team_id, team = teamDetail(teamId), index = Number(req.body?.stepIndex);
+    if (!Number.isInteger(index) || index < 1 || index > 4) return fail(res, 400, 'Пятый этап подтверждает только организатор.');
+    if (typeof req.body?.completed !== 'boolean') return fail(res, 400, 'Укажите статус этапа.');
+    if (team.submission && ['pending', 'approved'].includes(team.submission.status)) return fail(res, 409, 'Во время проверки и после зачёта этапы заблокированы.');
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : team.steps[index - 1].content;
+    if (typeof content !== 'string' || content.length > 5000) return fail(res, 400, 'Заметки слишком длинные.');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      saveWork(teamId, index, content);
+      if (req.body.completed) {
+        if (content.length < 80) { db.exec('ROLLBACK'); return fail(res, 400, 'Для зачёта этапа добавьте хотя бы 80 символов содержательных заметок.'); }
+        if (index > 1 && !team.steps[index - 2].completed) { db.exec('ROLLBACK'); return fail(res, 409, 'Сначала завершите предыдущий этап.'); }
+        const inserted = db.prepare('INSERT OR IGNORE INTO steps VALUES (?, ?, ?)').run(teamId, index, now());
+        if (inserted.changes) record(teamId, 'checkpoint_completed');
+      } else {
+        if (team.steps.slice(index).some(s => s.completed)) { db.exec('ROLLBACK'); return fail(res, 409, 'Сначала верните в работу более поздние этапы.'); }
+        db.prepare('DELETE FROM steps WHERE team_id=? AND step_index=?').run(teamId, index);
+      }
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    res.json({ team: teamDetail(teamId) });
   });
-
-  app.post('/api/team/submission', requireTeam, (req, res) => {
-    const team = db.prepare('SELECT t.*, c.ends_at, c.status FROM teams t JOIN challenges c ON c.id = t.challenge_id WHERE t.id = ?').get(req.session.team_id);
-    if (!team) return fail(res, 404, 'Команда не найдена.');
-    if (!isOpen(team)) return fail(res, 409, 'Челлендж завершён или неактивен.');
-
-    const title = cleanText(req.body?.title, 120);
-    const description = cleanText(req.body?.description, 1000);
-    if (title.length < 2) return fail(res, 400, 'Укажите название проекта.');
+  app.post('/api/team/submission', limiter(12, 60000), requireTeam, (req, res) => {
+    if (!isOpen()) return fail(res, 409, 'Приём проектов завершён.');
+    const team = teamDetail(req.session.team_id);
+    if (team.steps.slice(0, 4).some(s => !s.completed)) return fail(res, 409, 'Сначала завершите первые четыре этапа.');
+    if (team.submission && ['pending', 'approved'].includes(team.submission.status)) return fail(res, 409, 'Проект уже на проверке или подтверждён.');
+    const title = cleanText(req.body?.title, 120), description = cleanText(req.body?.description, 1000), category = req.body?.category;
+    if (title.length < 2 || description.length < 30 || !CATEGORIES.includes(category)) return fail(res, 400, 'Укажите название, категорию и описание от 30 символов.');
     const normalized = normalizePassportUrl(req.body?.url);
     if (!normalized.ok) return fail(res, 400, normalized.error);
-
-    const existing = db.prepare('SELECT * FROM submissions WHERE team_id = ? ORDER BY updated_at DESC LIMIT 1').get(team.id);
-    if (existing?.status === 'approved') return fail(res, 409, 'У команды уже есть подтверждённый проект в этом челлендже.');
-    if (existing?.status === 'pending') return fail(res, 409, 'Проект уже на проверке.');
-    const duplicate = db.prepare('SELECT id FROM submissions WHERE normalized_url = ? AND team_id <> ?').get(normalized.url, team.id);
-    if (duplicate) return fail(res, 409, 'Эта ссылка уже отправлена другой командой.');
-
-    const timestamp = now();
+    if (db.prepare('SELECT id FROM submissions WHERE normalized_url=? AND team_id<>?').get(normalized.url, team.id)) return fail(res, 409, 'Этот паспорт уже отправлен другой командой.');
+    db.exec('BEGIN IMMEDIATE');
     try {
-      if (existing?.status === 'returned') {
-        db.prepare(`
-          UPDATE submissions
-          SET title = ?, url = ?, normalized_url = ?, description = ?, status = 'pending', review_comment = '', updated_at = ?, reviewed_at = NULL
-          WHERE id = ?
-        `).run(title, normalized.url, normalized.url, description, timestamp, existing.id);
-      } else {
-        db.prepare(`
-          INSERT INTO submissions (id, team_id, challenge_id, title, url, normalized_url, description, status, review_comment, is_demo, created_at, updated_at, reviewed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?, ?, NULL)
-        `).run(newId('sub'), team.id, team.challenge_id, title, normalized.url, normalized.url, description, team.is_demo, timestamp, timestamp);
-      }
-      db.prepare('UPDATE teams SET started_at = COALESCE(started_at, ?), last_activity_at = ? WHERE id = ?').run(timestamp, timestamp, team.id);
-    } catch (error) {
-      if (String(error.message).includes('UNIQUE')) return fail(res, 409, 'Эта ссылка уже используется.');
-      throw error;
-    }
+      if (team.submission?.status === 'returned') db.prepare("UPDATE submissions SET title=?, url=?, normalized_url=?, description=?, category=?, status='pending', review_comment='', review_checklist='{}', updated_at=?, reviewed_at=NULL WHERE id=?")
+        .run(title, normalized.url, normalized.url, description, category, now(), team.submission.id);
+      else db.prepare("INSERT INTO submissions (id, team_id, challenge_id, title, url, normalized_url, description, status, created_at, updated_at, category) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
+        .run(id('sub'), team.id, team.challenge.id, title, normalized.url, normalized.url, description, now(), now(), category);
+      record(team.id, team.submission?.status === 'returned' ? 'project_resubmitted' : 'project_submitted');
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); if (String(error.message).includes('UNIQUE')) return fail(res, 409, 'Этот паспорт уже используется.'); throw error; }
     res.status(201).json({ team: teamDetail(team.id) });
   });
-
-  app.post('/api/team/reminders/:id/read', requireTeam, (req, res) => {
-    const reminder = db.prepare('SELECT * FROM reminders WHERE id = ?').get(req.params.id);
-    if (!reminder || reminder.team_id !== req.session.team_id) return fail(res, 404, 'Напоминание не найдено.');
-    db.prepare('UPDATE reminders SET read_at = ? WHERE id = ?').run(now(), reminder.id);
-    touchTeam(req.session.team_id);
-    res.json({ team: teamDetail(req.session.team_id) });
+  app.get('/api/team/mentor', requireTeam, (req, res) => {
+    const messages = db.prepare('SELECT * FROM (SELECT id, step_index, mode, source, content, created_at FROM mentor_messages WHERE team_id=? ORDER BY created_at DESC, id DESC LIMIT 30) ORDER BY created_at ASC, id ASC').all(req.session.team_id).map(m => ({ ...m, result: JSON.parse(m.content) }));
+    res.json({ messages });
   });
-
-  app.post('/api/teams/:id/reminder', requireStaff, (req, res) => {
-    const team = db.prepare(`
-      SELECT t.*, c.status, c.ends_at FROM teams t JOIN challenges c ON c.id = t.challenge_id WHERE t.id = ?
-    `).get(req.params.id);
-    if (!team) return fail(res, 404, 'Команда не найдена.');
-    if (req.session.role === 'teacher' && req.session.school_id !== team.school_id) {
-      return fail(res, 403, 'Учитель может напоминать только командам своей школы.');
+  app.post('/api/team/mentor', mentorLimiter, requireTeam, asyncRoute(async (req, res) => {
+    const parsed = z.object({ stepIndex: z.number().int().min(1).max(4), mode: z.enum(['guide', 'review', 'draft', 'pitch']), message: z.string().max(1500).default(''), language: z.enum(['ru', 'en']).default('ru') }).strict().safeParse(req.body);
+    if (!parsed.success) return fail(res, 400, 'Некорректный запрос наставнику.');
+    const teamId = req.session.team_id, team = teamDetail(teamId), input = parsed.data;
+    if (llm.publicStatus().enabled) {
+      const count = db.prepare("SELECT COUNT(*) c FROM llm_calls WHERE team_id=? AND created_at>?").get(teamId, new Date(Date.now() - 86400000).toISOString()).c;
+      if (count >= 40) return fail(res, 429, 'Лимит 40 обращений к модели в сутки. Шаблоны и заметки доступны без ограничений.', 'llm_quota');
     }
-    const message = cleanText(req.body?.message, 500) || DEFAULT_REMINDER;
-    db.prepare(`
-      INSERT INTO reminders (id, team_id, challenge_id, school_id, message, created_by_role, created_at, read_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-    `).run(newId('reminder'), team.id, team.challenge_id, team.school_id, message, req.session.role, now());
-    res.status(201).json({ ok: true });
+    const started = Date.now();
+    let result;
+    try { result = await llm.generate({ ...input, workbook: Object.fromEntries(team.steps.slice(0, 4).map(s => [s.index, s.content])) }); }
+    catch (error) { db.prepare('INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)').run(id('call'), teamId, 'llm', llm.publicStatus().model, 'error', Date.now() - started, now()); throw error; }
+    const latency = Date.now() - started;
+    db.prepare('INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id('call'), teamId, result.source, result.model, 'ok', latency, result.usage?.promptTokens || 0, result.usage?.completionTokens || 0, now());
+    db.prepare('INSERT INTO mentor_messages VALUES (?, ?, ?, ?, ?, ?, ?)').run(id('msg'), teamId, input.stepIndex, input.mode, result.source, JSON.stringify(result), now());
+    res.json({ result, latency });
+  }));
+  app.delete('/api/team/mentor', requireTeam, (req, res) => { db.prepare('DELETE FROM mentor_messages WHERE team_id=?').run(req.session.team_id); res.json({ ok: true }); });
+  app.delete('/api/team/data', requireTeam, (req, res) => { if (teamDetail(req.session.team_id)?.isDemo) return fail(res, 409, 'Общие демо-команды не удаляются. Удаление доступно для собственной пилотной команды.'); db.prepare('DELETE FROM teams WHERE id=?').run(req.session.team_id); res.setHeader('Set-Cookie', `ss_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies ? '; Secure' : ''}`); res.json({ ok: true }); });
+  app.get('/api/organizer', requireOrganizer, (req, res) => res.json(organizerData(req.query.includeDemo !== 'false')));
+  app.get('/api/organizer/export.csv', requireOrganizer, (req, res) => {
+    const data = organizerData(req.query.includeDemo !== 'false');
+    const rows = [['Команда', 'Школа', 'Страна', 'Этапы', 'Статус', 'Демо', 'Создана'], ...data.teams.map(t => [t.name, t.school_name, t.countryName, t.steps_completed, t.submission_status || 'new', t.is_demo ? 'да' : 'нет', t.created_at])];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="startify-funnel.csv"'); res.send('\uFEFF' + rows.map(r => r.map(safeCsvCell).join(',')).join('\r\n'));
   });
-
-  app.get('/api/organizer', requireOrganizer, requireChallenge, (req, res) => {
-    res.json(organizerData(req.challenge));
-  });
-
-  app.get('/api/teacher', requireTeacher, requireChallenge, (req, res) => {
-    const school = db.prepare('SELECT is_demo FROM schools WHERE id = ?').get(req.session.school_id);
-    if (!school) return fail(res, 404, 'Школа не найдена.');
-    if (school.is_demo !== req.challenge.is_demo) {
-      return fail(res, 409, 'Эта роль учителя доступна только в челлендже своего типа данных.');
-    }
-    const data = teacherData(req.challenge, req.session.school_id);
-    if (!data) return fail(res, 404, 'Школа не найдена.');
-    res.json(data);
-  });
-
+  app.post('/api/organizer/llm/test', requireOrganizer, asyncRoute(async (_req, res) => {
+    if (!llm.publicStatus().enabled) return fail(res, 409, 'LLM_ENABLED=false. Настройте серверный адаптер.');
+    const start = Date.now();
+    const result = await llm.generate({ stepIndex: 1, mode: 'guide', message: 'Ответь одним коротким вопросом о проблеме школьника.', workbook: {}, language: 'ru' });
+    res.json({ ok: true, model: result.model, latency: Date.now() - start, usage: result.usage || null });
+  }));
   app.post('/api/organizer/submissions/:id/review', requireOrganizer, (req, res) => {
-    const submission = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
-    if (!submission) return fail(res, 404, 'Заявка не найдена.');
-    if (submission.status !== 'pending') return fail(res, 409, 'Проверять можно только заявки в статусе «На проверке».');
-
-    const decision = req.body?.decision;
-    const comment = cleanText(req.body?.comment, 500);
-    const timestamp = now();
-
-    if (decision === 'approve') {
-      db.prepare("UPDATE submissions SET status = 'approved', review_comment = ?, reviewed_at = ?, updated_at = ? WHERE id = ?")
-        .run(comment, timestamp, timestamp, submission.id);
-      db.prepare('INSERT OR IGNORE INTO steps (team_id, step_index, completed_at) VALUES (?, 5, ?)').run(submission.team_id, timestamp);
-      db.prepare('UPDATE teams SET started_at = COALESCE(started_at, ?), last_activity_at = ? WHERE id = ?').run(timestamp, timestamp, submission.team_id);
-      return res.json({ ok: true });
-    }
-
-    if (decision === 'return') {
-      if (comment.length < 3) return fail(res, 400, 'Добавьте комментарий для доработки.');
-      db.prepare("UPDATE submissions SET status = 'returned', review_comment = ?, reviewed_at = ?, updated_at = ? WHERE id = ?")
-        .run(comment, timestamp, timestamp, submission.id);
-      db.prepare('DELETE FROM steps WHERE team_id = ? AND step_index = 5').run(submission.team_id);
-      touchTeam(submission.team_id);
-      return res.json({ ok: true });
-    }
-
-    return fail(res, 400, 'Неизвестное решение.');
+    const sub = db.prepare('SELECT * FROM submissions WHERE id=?').get(req.params.id);
+    if (!sub) return fail(res, 404, 'Заявка не найдена.');
+    const decision = req.body?.decision, comment = cleanText(req.body?.comment, 500);
+    if (!['approve', 'return'].includes(decision)) return fail(res, 400, 'Неизвестное решение.');
+    if (decision === 'return' && comment.length < 3) return fail(res, 400, 'Объясните, что нужно доработать.');
+    const checklist = req.body?.checklist;
+    if (decision === 'approve' && (!checklist || ['accessible', 'original', 'safe', 'complete'].some(k => checklist[k] !== true))) return fail(res, 400, 'Подтвердите все четыре пункта ручной проверки.');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (db.prepare('SELECT status FROM submissions WHERE id=?').get(sub.id).status !== 'pending') { db.exec('ROLLBACK'); return fail(res, 409, 'Заявка уже проверена.'); }
+      db.prepare('UPDATE submissions SET status=?, review_comment=?, review_checklist=?, reviewed_at=?, updated_at=? WHERE id=?').run(decision === 'approve' ? 'approved' : 'returned', comment, JSON.stringify(decision === 'approve' ? checklist : {}), now(), now(), sub.id);
+      record(sub.team_id, decision === 'approve' ? 'project_approved' : 'project_returned');
+      if (decision === 'approve') db.prepare('INSERT OR IGNORE INTO steps VALUES (?, 5, ?)').run(sub.team_id, now());
+      else db.prepare('DELETE FROM steps WHERE team_id=? AND step_index=5').run(sub.team_id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    res.json({ ok: true });
   });
-
   app.use('/api', (_req, res) => fail(res, 404, 'API-метод не найден.'));
-
-  if (frontend) {
-    if (isProduction) {
-      app.use(express.static(path.join(root, 'dist')));
-      app.get('*', (_req, res) => res.sendFile(path.join(root, 'dist', 'index.html')));
-    } else {
-      const { createServer } = await import('vite');
-      const vite = await createServer({
-        configFile: path.join(root, 'vite.config.js'),
-        root,
-        server: { middlewareMode: true, hmr: false, allowedHosts: true },
-        appType: 'spa'
-      });
-      app.use(vite.middlewares);
-    }
-  }
-
   app.use((error, _req, res, _next) => {
-    if (error?.type === 'entity.parse.failed') return fail(res, 400, 'Некорректный JSON.');
-    console.error(error);
     if (res.headersSent) return;
+    if (error.type === 'entity.too.large') return fail(res, 413, 'Запрос слишком большой.');
+    if (error instanceof SyntaxError && 'body' in error) return fail(res, 400, 'Некорректный JSON.');
+    if (error.code?.startsWith('llm_')) return fail(res, error.status || 503, error.message, error.code);
+    console.error(JSON.stringify({ event: 'server_error', message: error.message, at: now() }));
     fail(res, 500, 'Внутренняя ошибка сервера.');
   });
-
   return app;
 }

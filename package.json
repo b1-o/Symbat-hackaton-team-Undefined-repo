@@ -1,26 +1,31 @@
 {
   "name": "startify-sprint",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=22.13.0" },
   "description": "MVP школьной лиги стартап-спринтов поверх AI Startify для Symbat Hackathon",
-  "engines": {
-    "node": ">=22"
-  },
   "scripts": {
-    "dev": "node server/index.js",
+    "dev": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
-    "start": "NODE_ENV=production node server/index.js",
-    "test": "node --test tests/*.test.js"
+    "start": "NODE_ENV=production node --env-file-if-exists=.env server/index.js",
+    "test": "node --test tests/*.test.js",
+    "test:e2e": "playwright test",
+    "llm:check": "node --env-file-if-exists=.env scripts/check-llm.js"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.7.4",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "supertest": "^7.3.2",
     "vite": "^5.4.11"
   }
 }

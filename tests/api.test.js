@@ -1,192 +1,144 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
-import { openDatabase, DEMO_CHALLENGE_ID, DEMO_TEAM_ID } from '../server/db.js';
+import request from 'supertest';
+import { createDatabase } from '../server/db.js';
 import { createApp } from '../server/app.js';
+import { createLlmAdapter, readLlmConfig } from '../server/llm.js';
 
-test('Startify Sprint API', async (t) => {
-  const db = openDatabase(':memory:');
-  const app = await createApp({ db, frontend: false });
-  const server = app.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const base = `http://127.0.0.1:${server.address().port}`;
+function setup(t, options={}) {
+  const db=createDatabase(':memory:',{seedDemo:options.seedDemo!==false});
+  const llm=options.llm||createLlmAdapter(readLlmConfig({LLM_ENABLED:'false'}));
+  const app=createApp({db,llm,demoMode:options.demoMode!==false,organizerPassword:'test-password-123',inviteCode:'TEST-CODE',...options});
+  t.after(()=>db.close()); return {db,app};
+}
+const cookie=res=>res.headers['set-cookie'][0].split(';')[0];
+async function team(app,role='team',teamId){const r=await request(app).post('/api/demo/login').send({role,teamId}).expect(200);return cookie(r);}
+const notes='Мы проверяем проблему потерянных вещей в школе. Пользователь — ученик, который ищет свою куртку после урока. Записываем наблюдения и гипотезы отдельно.';
+async function completeSteps(agent){for(let i=1;i<=4;i++)await agent.patch('/api/team/steps').send({stepIndex:i,completed:true,content:notes}).expect(200);}
 
-  async function req(path, { method = 'GET', body, cookie } = {}) {
-    const response = await fetch(base + path, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(cookie ? { Cookie: cookie } : {})
-      },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
-    const json = await response.json().catch(() => ({}));
-    const setCookie = response.headers.get('set-cookie')?.split(';')[0];
-    return { status: response.status, json, cookie: setCookie || cookie };
-  }
-
-  t.after(() => {
-    server.close();
-    db.close();
-  });
-
-  let organizerCookie;
-  let liveChallenge;
-  let liveTeam;
-  let liveTeamCookie;
-
-  await t.test('default bootstrap is the isolated demo challenge', async () => {
-    const { status, json } = await req('/api/bootstrap');
-    assert.equal(status, 200);
-    assert.equal(json.challenge.id, DEMO_CHALLENGE_ID);
-    assert.equal(json.challenge.is_demo, 1);
-    assert.equal(json.stats.teams, 6);
-    assert.equal(json.stats.verified, 2);
-  });
-
-  await t.test('organizer can create a live pilot challenge', async () => {
-    const login = await req('/api/demo/login', { method: 'POST', body: { role: 'organizer' } });
-    organizerCookie = login.cookie;
-    const startsAt = new Date().toISOString();
-    const endsAt = new Date(Date.now() + 7 * 86400000).toISOString();
-    const created = await req('/api/organizer/challenges', {
-      method: 'POST',
-      cookie: organizerCookie,
-      body: { title: 'Live Pilot Sprint', description: 'Test pilot', accessCode: 'PILOT-TEST', startsAt, endsAt }
-    });
-    assert.equal(created.status, 201);
-    liveChallenge = created.json.challenge;
-    assert.equal(liveChallenge.is_demo, 0);
-
-    const empty = await req(`/api/bootstrap?challenge=${liveChallenge.id}`);
-    assert.equal(empty.json.stats.teams, 0);
-    assert.equal(empty.json.stats.verified, 0);
-  });
-
-  await t.test('live team join, reminder, invite analytics and publication stay scoped', async () => {
-    const joined = await req('/api/teams', {
-      method: 'POST',
-      body: {
-        challengeId: liveChallenge.id,
-        accessCode: 'PILOT-TEST',
-        countryCode: 'KZ',
-        schoolName: 'Live School',
-        city: 'Almaty',
-        teamName: 'Live Team',
-        nickname: 'Tester'
-      }
-    });
-    assert.equal(joined.status, 201);
-    liveTeam = joined.json.team;
-    liveTeamCookie = joined.cookie;
-    assert.equal(liveTeam.isDemo, false);
-
-    const reminded = await req(`/api/teams/${liveTeam.id}/reminder`, { method: 'POST', cookie: organizerCookie, body: {} });
-    assert.equal(reminded.status, 201);
-    const me = await req('/api/me', { cookie: liveTeamCookie });
-    assert.equal(me.json.team.reminders.length, 1);
-    const read = await req(`/api/team/reminders/${me.json.team.reminders[0].id}/read`, { method: 'POST', cookie: liveTeamCookie });
-    assert.equal(read.json.team.reminders.length, 0);
-
-    const click = await req('/api/invites/click', {
-      method: 'POST',
-      body: { challengeId: liveChallenge.id, fromSchoolId: liveTeam.school.id }
-    });
-    assert.equal(click.status, 201);
-
-    const submitted = await req('/api/team/submission', {
-      method: 'POST',
-      cookie: liveTeamCookie,
-      body: { title: 'Live Project', url: 'https://aistartify.com/startup/live-test-1', description: 'Live test' }
-    });
-    assert.equal(submitted.status, 201);
-    assert.equal(submitted.json.team.submission.status, 'pending');
-
-    const orgBefore = await req(`/api/organizer?challenge=${liveChallenge.id}`, { cookie: organizerCookie });
-    const pending = orgBefore.json.pending.find((item) => item.title === 'Live Project');
-    assert.ok(pending);
-    const approved = await req(`/api/organizer/submissions/${pending.id}/review`, {
-      method: 'POST',
-      cookie: organizerCookie,
-      body: { decision: 'approve' }
-    });
-    assert.equal(approved.status, 200);
-
-    const live = await req(`/api/bootstrap?challenge=${liveChallenge.id}`);
-    assert.equal(live.json.stats.verified, 1);
-    assert.equal(live.json.leaderboard.schools.length, 1);
-    assert.equal(live.json.leaderboard.schools[0].name, 'Live School');
-
-    const demo = await req(`/api/bootstrap?challenge=${DEMO_CHALLENGE_ID}`);
-    assert.equal(demo.json.stats.verified, 2);
-    assert.equal(demo.json.stats.teams, 6);
-
-    const org = await req(`/api/organizer?challenge=${liveChallenge.id}`, { cookie: organizerCookie });
-    assert.equal(org.json.growth.inviteClicks, 1);
-    assert.equal(org.json.growth.remindersSent, 1);
-    assert.equal(org.json.funnel.approved, 1);
-  });
-
-  await t.test('duplicate passport URL is rejected for another team', async () => {
-    const second = await req('/api/teams', {
-      method: 'POST',
-      body: {
-        challengeId: liveChallenge.id,
-        accessCode: 'PILOT-TEST',
-        countryCode: 'KZ',
-        schoolName: 'Live School',
-        city: 'Almaty',
-        teamName: 'Second Team',
-        nickname: 'Tester2'
-      }
-    });
-    assert.equal(second.status, 201);
-    const duplicate = await req('/api/team/submission', {
-      method: 'POST',
-      cookie: second.cookie,
-      body: { title: 'Duplicate', url: 'https://www.aistartify.com/startup/live-test-1?utm=x' }
-    });
-    assert.equal(duplicate.status, 409);
-  });
-
-  await t.test('teacher is scoped to their school and can remind a stuck demo team', async () => {
-    const teacher = await req('/api/demo/login', { method: 'POST', body: { role: 'teacher' } });
-    const data = await req(`/api/teacher?challenge=${DEMO_CHALLENGE_ID}`, { cookie: teacher.cookie });
-    assert.equal(data.status, 200);
-    assert.equal(data.json.school.id, 'school-kz-demo');
-    assert.ok(data.json.teams.every((team) => team.school_id === 'school-kz-demo'));
-    assert.ok(data.json.attention.some((team) => team.id === DEMO_TEAM_ID));
-
-    const forbidden = await req(`/api/teams/${liveTeam.id}/reminder`, { method: 'POST', cookie: teacher.cookie, body: {} });
-    assert.equal(forbidden.status, 403);
-
-    const allowed = await req(`/api/teams/${DEMO_TEAM_ID}/reminder`, { method: 'POST', cookie: teacher.cookie, body: {} });
-    assert.equal(allowed.status, 201);
-    const teamLogin = await req('/api/demo/login', { method: 'POST', body: { role: 'team', teamId: DEMO_TEAM_ID } });
-    const me = await req('/api/me', { cookie: teamLogin.cookie });
-    assert.ok(me.json.team.reminders.length >= 2);
-  });
-
-  await t.test('demo reset restores demo seed without touching live pilot data', async () => {
-    const reset = await req('/api/demo/reset', { method: 'POST', cookie: organizerCookie });
-    assert.equal(reset.status, 200);
-    assert.equal(reset.json.bootstrap.challenge.id, DEMO_CHALLENGE_ID);
-    assert.equal(reset.json.bootstrap.stats.teams, 6);
-    assert.equal(reset.json.bootstrap.stats.verified, 2);
-
-    const live = await req(`/api/bootstrap?challenge=${liveChallenge.id}`);
-    assert.equal(live.json.stats.teams, 2);
-    assert.equal(live.json.stats.verified, 1);
-    assert.equal(live.json.leaderboard.schools[0].name, 'Live School');
-  });
-
-  await t.test('invalid passport URL is rejected', async () => {
-    const login = await req('/api/demo/login', { method: 'POST', body: { role: 'team', teamId: DEMO_TEAM_ID } });
-    const invalid = await req('/api/team/submission', {
-      method: 'POST',
-      cookie: login.cookie,
-      body: { title: 'Bad URL', url: 'https://example.com/startup/x' }
-    });
-    assert.equal(invalid.status, 400);
-  });
+test('bootstrap never leaks invite code, sessions or recovery hashes',async(t)=>{
+ const {app,db}=setup(t); const r=await request(app).get('/api/bootstrap').expect(200); assert.equal(r.body.challenge.access_code,undefined);assert.equal(r.body.inviteHint,'TEST-CODE');assert.ok(r.body.demoTeams.length);assert.ok(!JSON.stringify(r.body).includes('access_hash'));
+ assert.ok(db.prepare('SELECT COUNT(*) c FROM teams').get().c===6);
+});
+test('production disables public demo organizer and requires password',async(t)=>{
+ const {app}=setup(t,{demoMode:false});await request(app).post('/api/demo/login').send({role:'organizer'}).expect(404);
+ await request(app).post('/api/auth/organizer').send({password:'wrong'}).expect(401);
+ const r=await request(app).post('/api/auth/organizer').send({password:'test-password-123'}).expect(200);assert.match(r.headers['set-cookie'][0],/HttpOnly/);
+ await request(app).get('/api/organizer').set('Cookie',cookie(r)).expect(200);
+ const boot=await request(app).get('/api/bootstrap');assert.equal(boot.body.inviteHint,null);assert.deepEqual(boot.body.demoTeams,[]);
+});
+test('team notes are private; other team and guest cannot read',async(t)=>{
+ const {app}=setup(t);const a=await team(app,'team','team-eduquest'),b=await team(app,'team','team-studylab');
+ await request(app).patch('/api/team/workbook').set('Cookie',a).send({stepIndex:1,content:'Секретный учебный черновик'}).expect(200);
+ const rb=await request(app).get('/api/team').set('Cookie',b);assert.ok(!JSON.stringify(rb.body).includes('Секретный'));
+ await request(app).get('/api/team').expect(401);await request(app).get('/api/organizer').set('Cookie',a).expect(401);
+});
+test('checkpoint requires real text and sequential completion; fifth is human-only',async(t)=>{
+ const {app}=setup(t);const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team',teamId:'team-studylab'});
+ await agent.patch('/api/team/steps').send({stepIndex:1,completed:true,content:'short'}).expect(400);
+ await agent.patch('/api/team/steps').send({stepIndex:2,completed:true,content:notes}).expect(409);
+ await agent.patch('/api/team/steps').send({stepIndex:5,completed:true,content:notes}).expect(400);
+ await completeSteps(agent);const r=await agent.get('/api/team');assert.equal(r.body.team.steps.filter(s=>s.completed).length,4);assert.equal(r.body.team.xp,400);
+ await agent.patch('/api/team/steps').send({stepIndex:1,completed:false}).expect(409);
+});
+test('submission → manual checklist → approved → unique showcase and score',async(t)=>{
+ const {app,db}=setup(t);const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team'});
+ const sub={title:'LostFound',url:'https://aistartify.com/startup/test-lostfound',description:'Помогаем школьникам находить потерянные вещи без публикации личных данных.',category:'EdTech'};
+ await agent.post('/api/team/submission').send(sub).expect(409);await completeSteps(agent);await agent.post('/api/team/submission').send(sub).expect(201);
+ await agent.post('/api/team/submission').send(sub).expect(409);await agent.patch('/api/team/workbook').send({stepIndex:1,content:notes}).expect(409); // evidence is frozen during review
+ await agent.patch('/api/team/steps').send({stepIndex:1,completed:false}).expect(409);
+ const org=await team(app,'organizer');const pending=await request(app).get('/api/organizer').set('Cookie',org);const item=pending.body.pending.find(p=>p.title==='LostFound');assert.ok(item.workbook.length===4);
+ await request(app).post(`/api/organizer/submissions/${item.id}/review`).set('Cookie',org).send({decision:'approve'}).expect(400);
+ const checklist={accessible:true,original:true,safe:true,complete:true};
+ await request(app).post(`/api/organizer/submissions/${item.id}/review`).set('Cookie',org).send({decision:'approve',checklist}).expect(200);
+ await request(app).post(`/api/organizer/submissions/${item.id}/review`).set('Cookie',org).send({decision:'approve',checklist}).expect(409);
+ const r=await agent.get('/api/team');assert.equal(r.body.team.steps.filter(s=>s.completed).length,5);assert.equal(r.body.team.submission.status,'approved');
+ const board=await request(app).get('/api/bootstrap');assert.equal(board.body.projects.filter(p=>p.title==='LostFound').length,1);
+ assert.equal(db.prepare("SELECT COUNT(*) c FROM submissions WHERE status='approved'").get().c,3);
+ const other=request.agent(app);await other.post('/api/demo/login').send({role:'team',teamId:'team-studylab'});await completeSteps(other);
+ await other.post('/api/team/submission').send({...sub,url:sub.url+'?utm=copy#top'}).expect(409);
+});
+test('returned submission keeps identity and can be corrected',async(t)=>{
+ const {app}=setup(t);const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team'});await completeSteps(agent);
+ await agent.post('/api/team/submission').send({title:'SchoolLoop',url:'https://aistartify.com/startup/return-test',description:'Учебный проект для проверки процесса возврата и повторной отправки материалов.',category:'EdTech'}).expect(201);
+ const orgAgent=request.agent(app);await orgAgent.post('/api/demo/login').send({role:'organizer'});
+ let orgData=await orgAgent.get('/api/organizer');let item=orgData.body.pending.find(p=>p.title==='SchoolLoop');
+ await orgAgent.post(`/api/organizer/submissions/${item.id}/review`).send({decision:'return',comment:''}).expect(400);
+ await orgAgent.post(`/api/organizer/submissions/${item.id}/review`).send({decision:'return',comment:'Добавьте результаты интервью и проверьте описание.'}).expect(200);
+ let r=await agent.get('/api/team');assert.equal(r.body.team.submission.status,'returned');assert.equal(r.body.team.steps.filter(s=>s.completed).length,4);
+ await agent.patch('/api/team/steps').send({stepIndex:4,completed:false}).expect(200);
+ await agent.patch('/api/team/steps').send({stepIndex:3,completed:false}).expect(200);
+ await agent.patch('/api/team/steps').send({stepIndex:2,completed:false}).expect(200);
+ await agent.patch('/api/team/steps').send({stepIndex:2,completed:true,content:notes+' Интервью проведены, выводы записаны.'}).expect(200);
+ await agent.patch('/api/team/steps').send({stepIndex:3,completed:true,content:notes}).expect(200);
+ await agent.patch('/api/team/steps').send({stepIndex:4,completed:true,content:notes}).expect(200);
+ await agent.post('/api/team/submission').send({title:'SchoolLoop v2',url:'https://aistartify.com/startup/return-test',description:'Обновлённое описание проекта с результатами проверки проблемы и следующим шагом.',category:'EdTech'}).expect(201);
+ r=await agent.get('/api/team');assert.equal(r.body.team.submission.id,item.id);assert.equal(r.body.team.submission.status,'pending');
+});
+test('new team gets one-time recovery key and can sign in on another client',async(t)=>{
+ const {app,db}=setup(t,{demoMode:false});
+ const fields={accessCode:'TEST-CODE',countryCode:'KZ',schoolName:'Pilot School',city:'Almaty',teamName:'Orbit Lab',nickname:'Captain',consent:true,ageConfirmed:true};
+ await request(app).post('/api/teams').send({...fields,consent:false}).expect(400);
+ await request(app).post('/api/teams').send({...fields,accessCode:'wrong'}).expect(400);
+ const r=await request(app).post('/api/teams').send(fields).expect(201);assert.ok(r.body.recoveryKey.length>=20);assert.ok(db.prepare('SELECT access_hash FROM teams WHERE id=?').get(r.body.teamId).access_hash!==r.body.recoveryKey);
+ await request(app).post('/api/teams').send(fields).expect(409);
+ const login=await request(app).post('/api/auth/team').send({teamId:r.body.teamId,recoveryKey:r.body.recoveryKey}).expect(200);
+ const me=await request(app).get('/api/me').set('Cookie',cookie(login));assert.equal(me.body.team.name,'Orbit Lab');assert.ok(!JSON.stringify(me.body).includes('recoveryKey'));
+ await request(app).post('/api/auth/team').send({teamId:r.body.teamId,recoveryKey:'wrong'}).expect(401);
+});
+test('CSRF origin rejected, sessions hashed and logout invalidates token',async(t)=>{
+ const {app,db}=setup(t);const r=await request(app).post('/api/demo/login').send({role:'team'}).expect(200);const c=cookie(r);const raw=c.split('=')[1];
+ assert.ok(!db.prepare('SELECT token FROM sessions WHERE token=?').get(raw));
+ await request(app).post('/api/logout').set('Origin','https://evil.example').set('Cookie',c).send({}).expect(403);
+ await request(app).post('/api/logout').set('Cookie',c).send({}).expect(200);await request(app).get('/api/team').set('Cookie',c).expect(401);
+});
+test('organizer can exclude demo, export safe CSV; AI never approves',async(t)=>{
+ const {app}=setup(t);const org=await team(app,'organizer');
+ const live=await request(app).get('/api/organizer?includeDemo=false').set('Cookie',org).expect(200);assert.equal(live.body.funnel.total,0);
+ const csv=await request(app).get('/api/organizer/export.csv').set('Cookie',org).expect(200);assert.match(csv.headers['content-type'],/text\/csv/);assert.match(csv.text,/EcoSchool/);
+ await request(app).post('/api/organizer/llm/test').set('Cookie',org).send({}).expect(409);
+});
+test('mentor response persists, invalid request rejected, history can be deleted',async(t)=>{
+ const {app}=setup(t);const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team'});
+ await agent.post('/api/team/mentor').send({stepIndex:1,mode:'guide',message:'Что дальше?'}).expect(200);
+ await agent.post('/api/team/mentor').send({stepIndex:5,mode:'guide'}).expect(400);
+ let r=await agent.get('/api/team/mentor');assert.equal(r.body.messages.length,1);assert.equal(r.body.messages[0].source,'template');
+ await agent.delete('/api/team/mentor').expect(200);r=await agent.get('/api/team/mentor');assert.equal(r.body.messages.length,0);
+});
+test('LLM errors are honest and counted, quota enforced',async(t)=>{
+ const llm={publicStatus:()=>({enabled:true,model:'smallthinker'}),generate:async(t)=>{throw Object.assign(new Error('Offline'),{code:'llm_unavailable',status:503});}};
+ const {app,db}=setup(t,{llm});const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team'});
+ const r=await agent.post('/api/team/mentor').send({stepIndex:1,mode:'guide'}).expect(503);assert.equal(r.body.code,'llm_unavailable');assert.equal(db.prepare("SELECT COUNT(*) c FROM llm_calls WHERE status='error'").get().c,1);
+ db.prepare('INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, 1, 0, 0, ?)').run('quota-test','team-eduquest','llm','smallthinker','ok',new Date().toISOString());
+ // Forty requests in the last day including this one is still below the cap.
+ for(let i=0;i<39;i++)db.prepare('INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, 1, 0, 0, ?)').run(`quota-${i}`,'team-eduquest','llm','smallthinker','ok',new Date().toISOString());
+ await agent.post('/api/team/mentor').send({stepIndex:1,mode:'guide'}).expect(429);
+});
+test('non-demo seed creates no fictional schools or projects',async(t)=>{
+ const {app}=setup(t,{seedDemo:false,demoMode:false});const r=await request(app).get('/api/bootstrap');assert.equal(r.body.stats.teams,0);assert.equal(r.body.projects.length,0);assert.ok(r.body.challenge.id);
+});
+test('expired sessions are rejected',async(t)=>{
+ const {app,db}=setup(t);const c=await team(app);db.prepare('UPDATE sessions SET expires_at=?').run('2020-01-01T00:00:00.000Z');await request(app).get('/api/team').set('Cookie',c).expect(401);
+});
+test('real activation events, no invented historical telemetry, data deletion',async(t)=>{
+ const {app,db}=setup(t,{seedDemo:false,demoMode:false,organizerPassword:'organizer-secret',inviteCode:'SPRINT-2026'});
+ const agent=request.agent(app);
+ await agent.post('/api/teams').send({teamName:'Measured Team',schoolName:'Measured School',countryCode:'KZ',nickname:'Student',accessCode:'SPRINT-2026',consent:true,ageConfirmed:true}).expect(201);
+ await agent.patch('/api/team/workbook').send({stepIndex:1,content:'Первая заметка команды о проблеме в школе.'}).expect(200);
+ await agent.patch('/api/team/workbook').send({stepIndex:1,content:'Вторая версия заметки команды о проблеме в школе.'}).expect(200);
+ const orgAgent=request.agent(app); await orgAgent.post('/api/auth/organizer').send({password:'organizer-secret'}).expect(200);
+ const metrics=await orgAgent.get('/api/organizer').expect(200);
+ assert.equal(metrics.body.activation.measuredTeams,1);assert.ok(metrics.body.activation.medianFirstValueMinutes >= 0 && metrics.body.activation.medianFirstValueMinutes < 0.1);assert.equal(metrics.body.activation.d7Eligible,0);assert.equal(metrics.body.activation.d7Percent,null);
+ assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='first_note'").get().n,1);
+ await agent.delete('/api/team/data').expect(200); await agent.get('/api/team').expect(401);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM teams').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM events').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM workbook').get().n,0);
+});
+test('non-demo public views hide seeded demo rows; referral approvals are counted',async(t)=>{
+ const {app}=setup(t,{demoMode:false});
+ const r=await request(app).get('/api/bootstrap').expect(200);
+ assert.equal(r.body.projects.length,0);assert.equal(r.body.leaderboard.schools.length,0);assert.equal(r.body.stats.teams,0);assert.equal(r.body.schools.length,0);
+ const {app:demoApp}=setup(t);
+ const org=request.agent(demoApp);await org.post('/api/demo/login').send({role:'organizer'}).expect(200);
+ const data=await org.get('/api/organizer').expect(200);
+ assert.equal(data.body.referrals,2);assert.equal(data.body.referralsApproved,0);
 });
