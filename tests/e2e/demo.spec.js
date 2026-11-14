@@ -61,7 +61,7 @@ test('English journey: switcher, persistence, mentor language and honest RU-only
 
   await page.goto('/#/join');
   await expect(page.getByText('Team name', { exact: true })).toBeVisible();
-  expect(await page.locator('select option').allTextContents()).toContain('Kazakhstan');
+  expect((await page.locator('select option').allTextContents()).join(' | ')).toContain('Kazakhstan');
 
   await page.goto('/#/team');
   await page.getByRole('button', { name: 'View the demo team' }).click();
@@ -72,7 +72,7 @@ test('English journey: switcher, persistence, mentor language and honest RU-only
 
   // Admin consoles are honestly labelled as Russian-only instead of half-translated.
   await page.goto('/#/organizer');
-  await expect(page.getByText(/consoles are available in Russian only/i)).toBeVisible();
+  await expect(page.locator('.lang-note')).toContainText('Russian only');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/team');

@@ -5448,3 +5448,13 @@ td {
     white-space: nowrap;
   }
 }
+
+@media (max-width: 600px) {
+  /* Keep the header on one line: the page itself already shows the section title. */
+  .breadcrumb strong {
+    display: none;
+  }
+  .lang-switch button {
+    padding: 5px 7px;
+  }
+}
