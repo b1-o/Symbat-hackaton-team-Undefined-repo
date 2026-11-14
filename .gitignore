@@ -1,7 +1,14 @@
 node_modules/
 dist/
+build/
 data/
+.arena/
+.cache/
 .env
 .env.*
+!.env.example
 *.log
+*.tsbuildinfo
+playwright-report/
+test-results/
 .DS_Store
