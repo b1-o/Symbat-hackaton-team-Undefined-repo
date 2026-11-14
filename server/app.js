@@ -202,7 +202,7 @@ export function createApp({ db, llm, demoMode = true, organizerPassword = '', in
     db.prepare('UPDATE schools SET access_hash=?, coordinator_name=? WHERE id=?').run(hash(key), cleanText(coordinatorName, 60), schoolId);
     return key;
   }
-  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint', version: '0.4.0' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'startify-sprint', version: '0.5.0' }));
   app.get('/api/bootstrap', (req, res) => {
     const selected = req.query.challenge ? resolveChallenge(req.query.challenge) : activeChallenge();
     if (req.query.challenge && !selected) return fail(res, 404, 'Сезон не найден или закрыт.');

@@ -103,3 +103,12 @@
 .ownership-check{display:flex;align-items:center;gap:11px;flex-wrap:wrap;background:#f7f5fd;border:1px solid #e2dcf5;border-radius:10px;padding:11px 14px;margin:12px 0;font-size:11px;color:#6f6497}
 .ownership-check code{font-weight:750;letter-spacing:1.1px;background:#fff;border:1px solid #ddd5f2;color:#6b5aa8}
 @media(max-width:760px){.ownership-code{padding:14px}.ownership-code code{font-size:13px;width:100%;text-align:center}}
+/* Language switch: the student journey is available in Russian and English. */
+.lang-switch{display:inline-flex;border:1px solid #dfe5e1;border-radius:8px;overflow:hidden;background:#fff}
+.lang-switch button{border:0;background:none;padding:7px 10px;font-size:10px;font-weight:750;color:#8a988f;letter-spacing:.4px}
+.lang-switch button.active{background:var(--forest);color:#fff}
+.lang-switch button:not(.active):hover{background:#f1f5ef;color:#4d5d55}
+.lang-note{display:flex;align-items:center;gap:12px;background:#eef2ed;border:1px solid #e0e7dc;border-radius:11px;padding:13px 16px;margin:0 34px 4px;font-size:11px;color:#6d7f66}.lang-note .text-link{margin-left:auto;white-space:nowrap}
+.lang-note>svg{flex-shrink:0;color:#7d9a6c}
+@media(max-width:760px){.lang-switch button{padding:6px 8px;font-size:9px}.top-actions{gap:9px}.breadcrumb strong{max-width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lang-note{flex-wrap:wrap;font-size:10px;margin:0 18px 14px}}
+@media(max-width:1200px){.lang-note{margin-left:24px;margin-right:24px}}

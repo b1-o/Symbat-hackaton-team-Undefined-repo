@@ -5,13 +5,26 @@ import Teacher from '../../src/pages/Teacher.jsx';
 import Organizer from '../../src/pages/Organizer.jsx';
 import Incubator from '../../src/pages/Incubator.jsx';
 import Strategy from '../../src/pages/Strategy.jsx';
+import Dashboard from '../../src/pages/Dashboard.jsx';
+import Join from '../../src/pages/Join.jsx';
+import League from '../../src/pages/League.jsx';
+import Showcase from '../../src/pages/Showcase.jsx';
+import { I18nProvider, useI18n } from '../../src/lib/i18n.jsx';
+
+// Switches the real provider, the same way the RU/EN buttons in the header do.
+function SetLanguage({ code }) {
+  const { setLang } = useI18n();
+  React.useEffect(() => { setLang(code); }, [code]);
+  return null;
+}
+const inEnglish = element => <I18nProvider><SetLanguage code="en" />{element}</I18nProvider>;
 
 const iso = new Date().toISOString();
-const steps = [1, 2, 3, 4, 5].map(i => ({ index: i, title: `Этап ${i}`, short: 'Шаг', description: 'Описание', prompt: 'Вопрос наставника', example: 'Пример', icon: 'lightbulb', completed: i < 3, content: 'Сохранённые заметки', updatedAt: iso }));
+const steps = [1, 2, 3, 4, 5].map(i => ({ index: i, title: `Этап ${i}`, short: 'Шаг', description: 'Описание', prompt: 'Вопрос наставника', example: 'Пример', icon: 'lightbulb', en: { title: `Stage ${i}`, short: 'Step', description: 'Description', prompt: 'Mentor question', example: 'Example' }, completed: i < 3, content: 'Сохранённые заметки', updatedAt: iso }));
 const challenge = { id: 'challenge-2026', slug: 'school-sprint-2026', title: 'Сезон 2026', status: 'active', isOpen: true, starts_at: iso, ends_at: iso };
 const bootstrap = {
   demoMode: true, inviteHint: 'SPRINT-2026', llm: { enabled: false, model: null },
-  countries: [{ code: 'KZ', flag: '🇰🇿', name: 'Казахстан' }], categories: ['EdTech'], steps,
+  countries: [{ code: 'KZ', flag: '🇰🇿', name: 'Казахстан', en: { name: 'Kazakhstan' } }], categories: ['EdTech'], steps,
   challenge, challenges: [challenge, { ...challenge, id: 'challenge-2', slug: 'winter', title: 'Зимний спринт' }],
   schools: [{ id: 'school-kz-demo', name: 'Демо-лицей №1', country_code: 'KZ', is_demo: 1 }],
   projects: [], demoTeams: [], demoSchools: [], leaderboard: { schools: [], countries: [] },
@@ -132,5 +145,41 @@ export async function run() {
   const read = [...incubator.host.querySelectorAll('button')].find(b => b.textContent.includes('Прочитано'));
   await act(async () => { read.click(); });
   assert.ok(calls.some(c => c.url.includes('/api/team/reminders/r1/read')), 'read receipt was not sent');
+
+  // --- English student journey -------------------------------------------
+  const enTeam = await mount('incubator (EN)', inEnglish(<Incubator {...ctx} me={{ role: 'team', team }} />));
+  for (const expected of ['STAGE 0', 'Stage 3', 'Team notebook', 'Challenge another school']) {
+    assert.ok(enTeam.text.includes(expected), `English incubator missing "${expected}"`);
+  }
+  assert.equal(enTeam.host.querySelector('.chat-compose textarea')?.getAttribute('aria-label'), 'Question for the mentor', 'mentor input keeps a Russian accessible name in English mode');
+  assert.ok(enTeam.text.includes(`${team.steps.filter(s => s.completed).length} of 5 stages`), 'English progress line was not interpolated');
+  const enPublication = [...enTeam.host.querySelectorAll('.workspace-tabs button')].find(b => b.textContent.includes('Stage 5'));
+  assert.ok(enPublication, 'English publication tab is missing');
+  await act(async () => { enPublication.click(); });
+  assert.ok(enTeam.host.textContent.includes('SS-EDUQ2345'), 'ownership code must survive the language switch');
+  assert.ok(enTeam.host.textContent.includes('Add your team code'), 'English publication flow does not explain the ownership step');
+  // Pupil-generated content and school names stay as written — we translate chrome, not user data.
+  assert.ok(enTeam.text.includes('Проверьте этап интервью'), 'a reminder written in Russian must not be machine-translated');
+  assert.equal(document.documentElement.lang, 'en', 'html lang was not updated for screen readers');
+
+  const enJoin = await mount('join (EN)', inEnglish(<Join {...ctx} me={{ role: 'guest' }} />));
+  for (const expected of ['Team name', 'Invite code', 'Kazakhstan', "Captain's nickname"]) {
+    assert.ok(enJoin.text.includes(expected), `English sign-up missing "${expected}"`);
+  }
+  const signInTab = [...enJoin.host.querySelectorAll('button')].find(b => b.textContent.trim() === 'Sign in with a key');
+  assert.ok(signInTab, 'English sign-in tab is missing');
+  await act(async () => { signInTab.click(); });
+  assert.ok(enJoin.host.textContent.includes('Recovery key'), 'English sign-in form is missing the recovery key field');
+  const enDash = await mount('dashboard (EN)', inEnglish(<Dashboard {...ctx} me={{ role: 'team', team }} />));
+  assert.ok(enDash.text.includes('Welcome back, EduQuest'), 'English dashboard heading is missing');
+  const enLeague = await mount('league (EN)', inEnglish(<League {...ctx} me={{ role: 'team', team }} />));
+  assert.ok(enLeague.text.includes('SCHOOL LEAGUE'), 'English league heading is missing');
+  const enShowcase = await mount('showcase (EN)', inEnglish(<Showcase {...ctx} me={{ role: 'guest' }} />));
+  assert.ok(enShowcase.text.includes('STARTUP SHOWCASE'), 'English showcase heading is missing');
+
+  // Russian remains the default and must be untouched by the English pass.
+  const ruAgain = await mount('incubator (RU default)', <I18nProvider><Incubator {...ctx} me={{ role: 'team', team }} /></I18nProvider>);
+  assert.ok(ruAgain.text.includes('Заметки команды'), 'Russian default regressed');
+
   return calls.length;
 }

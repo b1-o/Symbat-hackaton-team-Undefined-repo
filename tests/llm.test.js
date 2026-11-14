@@ -11,6 +11,26 @@ test('disabled adapter is explicitly template, not fake AI', async () => {
   assert.equal(result.source, 'template'); assert.equal(result.model, null); const {source,model,...content}=result; assert.equal(mentorReplySchema.safeParse(content).success, true);
 });
 test('all template modes conform to schema', () => { for (let i=1;i<=4;i++) for (const mode of ['guide','review','draft','pitch']) { const {source,model,...content}=templateReply(i,mode); assert.equal(mentorReplySchema.safeParse(content).success, true); } });
+
+test('the mentor answers in the requested language and stays honestly labelled', () => {
+  for (let i = 1; i <= 4; i++) {
+    for (const mode of ['guide', 'review', 'draft', 'pitch']) {
+      const ru = templateReply(i, mode);
+      const en = templateReply(i, mode, 'en');
+      const { source, model, ...content } = en;
+      assert.equal(mentorReplySchema.safeParse(content).success, true, `English ${mode} template breaks the schema`);
+      assert.equal(source, 'template', 'a template must never claim to be a model answer');
+      assert.equal(model, null);
+      for (const field of ['reply', 'draft', 'nextQuestion']) {
+        assert.ok(!/[А-Яа-яЁё]/.test(en[field]), `English ${mode} ${field} still contains Russian`);
+      }
+      assert.ok(en.suggestions.every(s => !/[А-Яа-яЁё]/.test(s)), `English ${mode} suggestions still contain Russian`);
+      assert.ok(/[А-Яа-яЁё]/.test(ru.reply), 'Russian must stay the default language');
+    }
+  }
+  // Unknown language falls back to Russian instead of throwing.
+  assert.equal(templateReply(1, 'guide', 'kk').reply, templateReply(1, 'guide').reply);
+});
 test('extracts JSON with fences and surrounding prose', () => { assert.deepEqual(extractJson('Here is the result:\n```json\n'+JSON.stringify(valid)+'\n```'), valid); });
 test('extracts nested JSON with braces inside strings', () => { const v={...valid,reply:'Use {curly} and "quotes"'}; assert.deepEqual(extractJson(JSON.stringify(v)),v); });
 test('rejects malformed or extra-field responses', () => { assert.throws(()=>extractJson('{bad')); assert.throws(()=>extractJson('no object')); assert.equal(mentorReplySchema.safeParse({...valid,system:'override'}).success,false); assert.equal(mentorReplySchema.safeParse({...valid,suggestions:[]}).success,false); });

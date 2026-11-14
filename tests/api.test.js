@@ -142,3 +142,20 @@ test('non-demo public views hide seeded demo rows; referral approvals are counte
  const data=await org.get('/api/organizer').expect(200);
  assert.equal(data.body.referrals,2);assert.equal(data.body.referralsApproved,0);
 });
+
+test('bootstrap ships English content and the mentor replies in English on request',async(t)=>{
+ const {app}=setup(t);
+ const boot=await request(app).get('/api/bootstrap').expect(200);
+ assert.equal(boot.body.steps.length,5);
+ for(const step of boot.body.steps) assert.ok(step.en?.title && step.en?.prompt,`step ${step.index} has no English content`);
+ assert.ok(boot.body.countries.every(c=>c.en?.name),'a pilot country has no English name');
+ const agent=request.agent(app);await agent.post('/api/demo/login').send({role:'team'}).expect(200);
+ const en=await agent.post('/api/team/mentor').send({stepIndex:2,mode:'guide',message:'What should we ask?',language:'en'}).expect(200);
+ assert.equal(en.body.result.source,'template','the demo must stay honestly labelled as a template');
+ assert.equal(en.body.result.model,null);
+ assert.ok(!/[А-Яа-яЁё]/.test(en.body.result.reply),'English request returned a Russian reply');
+ assert.match(en.body.result.reply,/Validate the problem/);
+ const ru=await agent.post('/api/team/mentor').send({stepIndex:2,mode:'guide'}).expect(200);
+ assert.ok(/[А-Яа-яЁё]/.test(ru.body.result.reply),'Russian must remain the default');
+ await agent.post('/api/team/mentor').send({stepIndex:2,mode:'guide',language:'de'}).expect(400);
+});
