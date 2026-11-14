@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Rocket, Trophy, Users, School, Globe2, CheckCircle2, Circle, ExternalLink,
-  Send, Copy, ShieldCheck, LayoutDashboard, ArrowRight, Sparkles, AlertCircle, Flag
+  Send, Copy, ShieldCheck, LayoutDashboard, ArrowRight, Sparkles, AlertCircle, Flag,
+  Bell, RefreshCw, Plus, GraduationCap, Megaphone, Clock, Link2
 } from 'lucide-react';
 
 const AI_STARTIFY_URL = 'https://aistartify.com/';
@@ -17,13 +18,18 @@ async function api(url, options = {}) {
 }
 
 function currentRoute() {
-  const hash = window.location.hash.replace(/^#/, '');
-  return hash || '/';
+  return window.location.hash.replace(/^#/, '') || '/';
 }
 
 function formatDate(value) {
   if (!value) return '—';
   return new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
+function formatHours(value) {
+  if (value === null || value === undefined) return '—';
+  if (value < 24) return `${Math.round(value)} ч`;
+  return `${(value / 24).toFixed(1)} дн.`;
 }
 
 async function copyText(text) {
@@ -39,6 +45,10 @@ async function copyText(text) {
     area.remove();
     return ok;
   }
+}
+
+function inviteLink(schoolId, challengeSlug) {
+  return `${window.location.origin}/?from=${encodeURIComponent(schoolId)}&challenge=${encodeURIComponent(challengeSlug)}#/join`;
 }
 
 function Badge({ children, tone = 'neutral' }) {
@@ -57,19 +67,27 @@ function StatCard({ icon: Icon, label, value }) {
   );
 }
 
-function Header({ route, me, navigate, demoLogin, logout }) {
+function Header({ route, me, data, challengeId, selectChallenge, navigate, demoLogin, logout }) {
   const links = [
     ['/', 'Челлендж'],
     ['/leaderboard', 'Рейтинг'],
     ['/team', 'Моя команда'],
+    ['/teacher', 'Учитель'],
     ['/organizer', 'Организатор']
   ];
+  const isDemo = Boolean(data.challenge?.is_demo);
   return (
     <>
       <div className="demo-banner">
-        <span><Sparkles size={14} /> Демо-режим: учебные данные, без реальной интеграции с AI Startify</span>
+        <span>
+          <Sparkles size={14} />
+          {isDemo
+            ? 'Демо-челлендж: учебные данные, без реальной интеграции с AI Startify'
+            : 'Пилотный челлендж: локальное сохранение, демо-авторизация не для production'}
+        </span>
         <div className="demo-actions">
-          <button onClick={() => demoLogin('team')}>Демо-команда</button>
+          {isDemo && <button onClick={() => demoLogin('team')}>Демо-команда</button>}
+          {isDemo && <button onClick={() => demoLogin('teacher')}>Демо-учитель</button>}
           <button onClick={() => demoLogin('organizer')}>Демо-организатор</button>
           {me.role !== 'guest' && <button onClick={logout}>Выйти</button>}
         </div>
@@ -79,6 +97,13 @@ function Header({ route, me, navigate, demoLogin, logout }) {
           <span className="brand-mark"><Rocket size={20} /></span>
           <span>Startify Sprint</span>
         </button>
+        <select className="challenge-select" value={challengeId} onChange={(e) => selectChallenge(e.target.value)} aria-label="Выбор челленджа">
+          {data.challenges.map((challenge) => (
+            <option key={challenge.id} value={challenge.id}>
+              {challenge.is_demo ? 'Демо · ' : ''}{challenge.title}
+            </option>
+          ))}
+        </select>
         <nav className="nav">
           {links.map(([path, label]) => (
             <button key={path} className={route === path ? 'active' : ''} onClick={() => navigate(path)}>
@@ -88,6 +113,7 @@ function Header({ route, me, navigate, demoLogin, logout }) {
         </nav>
         <div className="header-role">
           {me.role === 'team' && <Badge tone="blue">{me.team?.name}</Badge>}
+          {me.role === 'teacher' && <Badge tone="green">{me.school?.name}</Badge>}
           {me.role === 'organizer' && <Badge tone="purple">Организатор</Badge>}
           {me.role === 'guest' && <Badge>Гость</Badge>}
         </div>
@@ -103,7 +129,10 @@ function Landing({ data, me, navigate }) {
     <main>
       <section className="hero">
         <div className="hero-content">
-          <Badge tone="blue">Международный школьный спринт</Badge>
+          <div className="badge-row">
+            <Badge tone="blue">Международный школьный спринт</Badge>
+            {challenge.is_demo ? <Badge>Демо-данные</Badge> : <Badge tone="green">Пилот</Badge>}
+          </div>
           <h1>{challenge.title}</h1>
           <p className="lead">{challenge.description}</p>
           <div className="hero-actions">
@@ -112,6 +141,9 @@ function Landing({ data, me, navigate }) {
             </button>
             <button className="btn ghost" onClick={() => navigate('/leaderboard')}>
               <Trophy size={18} /> Рейтинг школ
+            </button>
+            <button className="btn ghost" onClick={() => navigate('/teacher')}>
+              <GraduationCap size={18} /> Кабинет учителя
             </button>
           </div>
           <div className="hero-meta">
@@ -126,13 +158,13 @@ function Landing({ data, me, navigate }) {
             <li><span>2</span> Команда проходит этапы в AI Startify</li>
             <li><span>3</span> Отправляет ссылку на опубликованный проект</li>
             <li><span>4</span> Организатор подтверждает публикацию</li>
-            <li><span>5</span> Школа получает место в рейтинге</li>
+            <li><span>5</span> Школа получает место в рейтинге текущего челленджа</li>
           </ol>
         </div>
       </section>
 
       <section className="stats-grid">
-        <StatCard icon={Users} label="Команд" value={data.stats.teams} />
+        <StatCard icon={Users} label="Команд в челлендже" value={data.stats.teams} />
         <StatCard icon={School} label="Школ" value={data.stats.schools} />
         <StatCard icon={Globe2} label="Стран" value={data.stats.countries} />
         <StatCard icon={CheckCircle2} label="Подтверждённых проектов" value={data.stats.verified} />
@@ -175,6 +207,7 @@ function ProjectCard({ project }) {
 }
 
 function SchoolTable({ rows, compact = false, onChallenge }) {
+  if (!rows.length) return <p className="muted">В этом челлендже пока нет школ.</p>;
   return (
     <div className="table-wrap">
       <table>
@@ -224,6 +257,17 @@ function JoinPage({ data, onJoined, toast }) {
   });
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!fromSchoolId) return;
+    const key = `ss_invite_click_${data.challenge.id}_${fromSchoolId}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+    api('/api/invites/click', {
+      method: 'POST',
+      body: JSON.stringify({ challengeId: data.challenge.id, fromSchoolId })
+    }).catch(() => sessionStorage.removeItem(key));
+  }, [fromSchoolId, data.challenge.id]);
+
   function update(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
@@ -232,7 +276,7 @@ function JoinPage({ data, onJoined, toast }) {
     event.preventDefault();
     setBusy(true);
     try {
-      await api('/api/teams', { method: 'POST', body: JSON.stringify({ ...form, fromSchoolId }) });
+      await api('/api/teams', { method: 'POST', body: JSON.stringify({ ...form, challengeId: data.challenge.id, fromSchoolId }) });
       toast('Команда создана. Добро пожаловать в спринт!');
       onJoined();
     } catch (error) {
@@ -245,9 +289,12 @@ function JoinPage({ data, onJoined, toast }) {
   return (
     <main className="narrow">
       <div className="card">
-        <Badge tone="blue">Вход в спринт</Badge>
+        <div className="badge-row">
+          <Badge tone="blue">Вход в спринт</Badge>
+          {data.challenge.is_demo ? <Badge>Демо</Badge> : <Badge tone="green">Пилот</Badge>}
+        </div>
         <h1>Соберите команду школы</h1>
-        <p className="muted">Демо-форма не собирает реальные персональные данные школьников. Используйте nickname и учебное название школы.</p>
+        <p className="muted">Используйте nickname и учебное название школы. Не вводите реальные персональные данные школьников.</p>
         {invitingSchool && <div className="notice">Вас пригласила школа: <strong>{invitingSchool.name}</strong></div>}
         <form onSubmit={submit} className="form-grid">
           <label>Код приглашения
@@ -259,7 +306,7 @@ function JoinPage({ data, onJoined, toast }) {
             </select>
           </label>
           <label>Школа
-            <input list="schools" value={form.schoolName} onChange={(e) => update('schoolName', e.target.value)} placeholder="Например, Демо-лицей №1" required />
+            <input list="schools" value={form.schoolName} onChange={(e) => update('schoolName', e.target.value)} placeholder="Название школы" required />
             <datalist id="schools">
               {data.schools.map((school) => <option key={school.id} value={school.name} />)}
             </datalist>
@@ -280,16 +327,16 @@ function JoinPage({ data, onJoined, toast }) {
   );
 }
 
-function TeamPage({ me, refresh, navigate, toast, demoLogin }) {
+function TeamPage({ me, refresh, navigate, toast, demoLogin, data }) {
   if (me.role !== 'team') {
     return (
       <main className="narrow">
         <div className="card center">
           <h1>Кабинет команды</h1>
-          <p className="muted">Войдите по приглашению или откройте демо-команду.</p>
+          <p className="muted">Войдите по приглашению или откройте демо-команду в демо-челлендже.</p>
           <div className="hero-actions center-actions">
             <button className="btn primary" onClick={() => navigate('/join')}>Вступить</button>
-            <button className="btn ghost" onClick={() => demoLogin('team')}>Демо-команда</button>
+            {data.challenge.is_demo && <button className="btn ghost" onClick={() => demoLogin('team')}>Демо-команда</button>}
           </div>
         </div>
       </main>
@@ -300,8 +347,10 @@ function TeamPage({ me, refresh, navigate, toast, demoLogin }) {
 
 function TeamWorkspace({ team, refresh, toast }) {
   const [busyStep, setBusyStep] = useState(null);
+  const [busySubmit, setBusySubmit] = useState(false);
   const submission = team.submission;
   const [form, setForm] = useState({ title: '', url: '', description: '' });
+  const open = team.challenge.status === 'active' && new Date(team.challenge.endsAt).getTime() >= Date.now();
 
   useEffect(() => {
     if (submission?.status === 'returned') {
@@ -313,7 +362,7 @@ function TeamWorkspace({ team, refresh, toast }) {
   const progress = Math.round((completedCount / team.steps.length) * 100);
 
   async function toggleStep(step) {
-    if (step.index === 5) return;
+    if (step.index === 5 || !open) return;
     setBusyStep(step.index);
     try {
       await api('/api/team/steps', { method: 'PATCH', body: JSON.stringify({ stepIndex: step.index, completed: !step.completed }) });
@@ -327,9 +376,21 @@ function TeamWorkspace({ team, refresh, toast }) {
 
   async function submitProject(event) {
     event.preventDefault();
+    setBusySubmit(true);
     try {
       await api('/api/team/submission', { method: 'POST', body: JSON.stringify(form) });
       toast('Проект отправлен на проверку.');
+      await refresh();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setBusySubmit(false);
+    }
+  }
+
+  async function readReminder(id) {
+    try {
+      await api(`/api/team/reminders/${id}/read`, { method: 'POST' });
       await refresh();
     } catch (error) {
       toast(error.message, 'error');
@@ -337,21 +398,41 @@ function TeamWorkspace({ team, refresh, toast }) {
   }
 
   async function inviteSchool() {
-    const link = `${window.location.origin}/?from=${team.school.id}#/join`;
-    const ok = await copyText(link);
-    toast(ok ? 'Ссылка-вызов скопирована.' : `Ссылка: ${link}`, ok ? 'success' : 'error');
+    const ok = await copyText(inviteLink(team.school.id, team.challenge.slug));
+    toast(ok ? 'Ссылка-вызов скопирована.' : 'Не удалось скопировать ссылку.', ok ? 'success' : 'error');
   }
 
   return (
     <main>
       <section className="page-head">
         <div>
-          <Badge tone="blue">{team.school.countryName}</Badge>
+          <div className="badge-row">
+            <Badge tone="blue">{team.school.countryName}</Badge>
+            {team.isDemo && <Badge>Демо</Badge>}
+          </div>
           <h1>{team.name}</h1>
           <p className="muted">{team.school.name} · {team.school.city} · участник: {team.nickname}</p>
+          <p className="muted small">{team.challenge.title}</p>
         </div>
         <button className="btn ghost" onClick={inviteSchool}><Copy size={16} /> Бросить вызов другой школе</button>
       </section>
+
+      {!open && <div className="notice warning">Челлендж завершён или неактивен. Новые действия недоступны.</div>}
+
+      {team.reminders?.length > 0 && (
+        <section className="card reminder-card">
+          <div className="card-head"><h2><Bell size={18} /> Напоминания</h2><Badge tone="amber">{team.reminders.length}</Badge></div>
+          <div className="review-list">
+            {team.reminders.map((reminder) => (
+              <article className="review-card" key={reminder.id}>
+                <p>{reminder.message}</p>
+                <div className="muted small">{reminder.created_by_role === 'teacher' ? 'Учитель' : 'Организатор'} · {formatDate(reminder.created_at)}</div>
+                <button className="btn tiny" onClick={() => readReminder(reminder.id)}>Прочитано</button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head">
@@ -365,7 +446,7 @@ function TeamWorkspace({ team, refresh, toast }) {
               key={step.index}
               className={`step-card ${step.completed ? 'done' : ''} ${team.nextStep === step.index ? 'next' : ''}`}
               onClick={() => toggleStep(step)}
-              disabled={step.index === 5 || busyStep === step.index}
+              disabled={step.index === 5 || busyStep === step.index || !open}
             >
               <div className="step-icon">{step.completed ? <CheckCircle2 size={20} /> : <Circle size={20} />}</div>
               <div>
@@ -385,9 +466,7 @@ function TeamWorkspace({ team, refresh, toast }) {
 
       <section className="card">
         <div className="card-head"><h2>Публикация проекта</h2><SubmissionBadge submission={submission} /></div>
-        {!submission && (
-          <SubmissionForm form={form} setForm={setForm} onSubmit={submitProject} />
-        )}
+        {!submission && <SubmissionForm form={form} setForm={setForm} onSubmit={submitProject} busy={busySubmit} disabled={!open} />}
         {submission?.status === 'pending' && (
           <div className="notice">
             <strong>{submission.title}</strong> отправлен на проверку. Организатор проверит ссылку вручную.
@@ -403,7 +482,7 @@ function TeamWorkspace({ team, refresh, toast }) {
         {submission?.status === 'returned' && (
           <>
             <div className="notice warning"><strong>Нужна доработка:</strong> {submission.review_comment}</div>
-            <SubmissionForm form={form} setForm={setForm} onSubmit={submitProject} />
+            <SubmissionForm form={form} setForm={setForm} onSubmit={submitProject} busy={busySubmit} disabled={!open} />
           </>
         )}
       </section>
@@ -418,19 +497,19 @@ function SubmissionBadge({ submission }) {
   return <Badge tone="red">Возвращён</Badge>;
 }
 
-function SubmissionForm({ form, setForm, onSubmit }) {
+function SubmissionForm({ form, setForm, onSubmit, busy, disabled }) {
   return (
     <form className="form-grid" onSubmit={onSubmit}>
       <label>Название проекта
-        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required disabled={disabled} />
       </label>
       <label>Ссылка на паспорт AI Startify
-        <input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://aistartify.com/startup/…" required />
+        <input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://aistartify.com/startup/…" required disabled={disabled} />
       </label>
       <label className="full-width">Короткое описание
-        <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} disabled={disabled} />
       </label>
-      <button className="btn primary"><Send size={16} /> Отправить на проверку</button>
+      <button className="btn primary" disabled={busy || disabled}><Send size={16} /> {busy ? 'Отправляем…' : 'Отправить на проверку'}</button>
     </form>
   );
 }
@@ -444,8 +523,7 @@ function LeaderboardPage({ data, toast }) {
   }, [data.leaderboard.schools, country]);
 
   async function challenge(schoolId) {
-    const link = `${window.location.origin}/?from=${schoolId}#/join`;
-    const ok = await copyText(link);
+    const ok = await copyText(inviteLink(schoolId, data.challenge.slug));
     toast(ok ? 'Ссылка-вызов скопирована.' : 'Не удалось скопировать ссылку.', ok ? 'success' : 'error');
   }
 
@@ -453,9 +531,9 @@ function LeaderboardPage({ data, toast }) {
     <main>
       <section className="page-head">
         <div>
-          <Badge tone="purple">Рейтинг</Badge>
+          <Badge tone="purple">Рейтинг · {data.challenge.title}</Badge>
           <h1>Школы, страны и проекты</h1>
-          <p className="muted">Место определяется числом подтверждённых публикаций, а не регистраций.</p>
+          <p className="muted">Место определяется числом подтверждённых публикаций в текущем челлендже.</p>
         </div>
         <select value={country} onChange={(e) => setCountry(e.target.value)}>
           <option value="all">Все страны</option>
@@ -493,21 +571,167 @@ function LeaderboardPage({ data, toast }) {
   );
 }
 
-function OrganizerPage({ me, demoLogin, refresh, toast }) {
-  const [org, setOrg] = useState(null);
-  const [comments, setComments] = useState({});
+function GrowthPanel({ growth, funnel }) {
+  return (
+    <section className="card">
+      <div className="card-head"><h2>Рост и сопровождение</h2></div>
+      <div className="metric-row">
+        <div><strong>{growth.inviteClicks}</strong><span className="muted small"> переходов по приглашениям</span></div>
+        <div><strong>{growth.referredTeams}</strong><span className="muted small"> команд по приглашениям</span></div>
+        <div><strong>{growth.referredApproved}</strong><span className="muted small"> публикаций по приглашениям</span></div>
+        <div><strong>{growth.remindersSent}</strong><span className="muted small"> напоминаний отправлено</span></div>
+        <div><strong>{formatHours(funnel.medianHoursToPublish)}</strong><span className="muted small"> медиана до публикации</span></div>
+      </div>
+    </section>
+  );
+}
+
+function AttentionList({ teams, onRemind, busy }) {
+  if (!teams.length) return <p className="muted">Нет команд, которым сейчас нужно внимание.</p>;
+  return (
+    <div className="review-list">
+      {teams.map((team) => (
+        <article className="review-card attention-card" key={team.id}>
+          <div className="project-top">
+            <h3>{team.name} {team.isDemo && <Badge>Демо</Badge>}</h3>
+            <Badge tone="amber">{team.attentionReason}</Badge>
+          </div>
+          <p className="muted">{team.school_name} · {team.countryName} · шаги {team.steps_completed}/5</p>
+          <p className="muted small">
+            <Clock size={13} /> Последняя активность: {formatDate(team.last_activity_at)} · Напоминаний: {team.reminders_sent}, непрочитанных: {team.reminders_unread}
+          </p>
+          <button className="btn tiny" disabled={busy === team.id} onClick={() => onRemind(team.id)}>
+            <Megaphone size={14} /> {busy === team.id ? 'Отправляем…' : 'Напомнить'}
+          </button>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function TeamsTable({ teams }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr><th>Команда</th><th>Школа</th><th>Шаги</th><th>Проект</th><th>Статус</th><th>Внимание</th></tr></thead>
+        <tbody>
+          {teams.map((team) => (
+            <tr key={team.id}>
+              <td><strong>{team.name}</strong><div className="muted small">{team.nickname}</div></td>
+              <td>{team.school_name}<div className="muted small">{team.countryName}</div></td>
+              <td>{team.steps_completed}/5</td>
+              <td>{team.submission_title || '—'}</td>
+              <td><SubmissionBadge submission={team.submission_status ? { status: team.submission_status } : null} /></td>
+              <td>{team.attentionReason ? <Badge tone="amber">{team.attentionReason}</Badge> : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TeacherPage({ me, data, challengeId, refresh, toast, demoLogin }) {
+  const [teacher, setTeacher] = useState(null);
   const [busy, setBusy] = useState(null);
 
   async function load() {
-    if (me.role !== 'organizer') return;
+    if (me.role !== 'teacher') return;
     try {
-      setOrg(await api('/api/organizer'));
+      setTeacher(await api(`/api/teacher?challenge=${encodeURIComponent(challengeId)}`));
     } catch (error) {
       toast(error.message, 'error');
     }
   }
 
-  useEffect(() => { load(); }, [me.role]);
+  useEffect(() => { load(); }, [me.role, challengeId]);
+
+  async function remind(teamId) {
+    setBusy(teamId);
+    try {
+      await api(`/api/teams/${teamId}/reminder`, { method: 'POST', body: JSON.stringify({}) });
+      toast('Напоминание отправлено команде.');
+      await load();
+      await refresh();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copyInvite() {
+    if (!teacher) return;
+    const ok = await copyText(inviteLink(teacher.school.id, data.challenge.slug));
+    toast(ok ? 'Ссылка для класса скопирована.' : 'Не удалось скопировать ссылку.', ok ? 'success' : 'error');
+  }
+
+  if (me.role !== 'teacher') {
+    return (
+      <main className="narrow">
+        <div className="card center">
+          <GraduationCap size={32} />
+          <h1>Кабинет учителя</h1>
+          <p className="muted">Учитель видит только команды своей школы, помогает застрявшим и приглашает класс.</p>
+          {data.challenge.is_demo
+            ? <button className="btn primary" onClick={() => demoLogin('teacher')}>Открыть демо-учителя</button>
+            : <p className="notice">Демо-учитель доступен в демо-челлендже. Для пилота переключитесь на демо-челлендж или используйте роль организатора.</p>}
+        </div>
+      </main>
+    );
+  }
+
+  if (!teacher) return <main className="narrow"><div className="card">Загрузка…</div></main>;
+
+  return (
+    <main>
+      <section className="page-head">
+        <div>
+          <Badge tone="green">Учитель · {teacher.school.name}</Badge>
+          <h1>Команды школы</h1>
+          <p className="muted">{data.challenge.title}</p>
+        </div>
+        <button className="btn ghost" onClick={copyInvite}><Link2 size={16} /> Пригласить класс</button>
+      </section>
+      <section className="stats-grid">
+        <StatCard icon={Users} label="Команд школы" value={teacher.funnel.total} />
+        <StatCard icon={Rocket} label="Начали" value={teacher.funnel.started} />
+        <StatCard icon={Send} label="Отправили" value={teacher.funnel.submitted} />
+        <StatCard icon={CheckCircle2} label="Подтверждено" value={teacher.funnel.approved} />
+      </section>
+      <div className="notice">Конверсия школы в публикацию: <strong>{teacher.funnel.conversion}%</strong> · Требуют внимания: {teacher.attention.length}</div>
+      <GrowthPanel growth={teacher.growth} funnel={teacher.funnel} />
+      <section className="card">
+        <div className="card-head"><h2>Кому помочь</h2><Badge tone="amber">{teacher.attention.length}</Badge></div>
+        <AttentionList teams={teacher.attention} onRemind={remind} busy={busy} />
+      </section>
+      <section className="card">
+        <div className="card-head"><h2>Все команды школы</h2></div>
+        <TeamsTable teams={teacher.teams} />
+      </section>
+    </main>
+  );
+}
+
+function OrganizerPage({ me, data, challengeId, refresh, toast, demoLogin, selectChallenge }) {
+  const [org, setOrg] = useState(null);
+  const [comments, setComments] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [tab, setTab] = useState('review');
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ title: '', description: '', accessCode: '', startsAt: '', endsAt: '' });
+  const [creating, setCreating] = useState(false);
+
+  async function load() {
+    if (me.role !== 'organizer') return;
+    try {
+      setOrg(await api(`/api/organizer?challenge=${encodeURIComponent(challengeId)}`));
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  }
+
+  useEffect(() => { load(); }, [me.role, challengeId]);
 
   async function review(id, decision) {
     setBusy(id);
@@ -527,13 +751,58 @@ function OrganizerPage({ me, demoLogin, refresh, toast }) {
     }
   }
 
+  async function remind(teamId) {
+    setBusy(teamId);
+    try {
+      await api(`/api/teams/${teamId}/reminder`, { method: 'POST', body: JSON.stringify({}) });
+      toast('Напоминание отправлено.');
+      await load();
+      await refresh();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resetDemo() {
+    if (!window.confirm('Сбросить только демо-данные? Пилотные челленджи и команды не будут затронуты.')) return;
+    setBusy('reset');
+    try {
+      const result = await api('/api/demo/reset', { method: 'POST' });
+      toast('Демо-сценарий восстановлен.');
+      setOrg(null);
+      await selectChallenge(result.bootstrap.challenge.id);
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createChallenge(event) {
+    event.preventDefault();
+    setCreating(true);
+    try {
+      const result = await api('/api/organizer/challenges', { method: 'POST', body: JSON.stringify(createForm) });
+      toast('Пилотный челлендж создан.');
+      setShowCreate(false);
+      setCreateForm({ title: '', description: '', accessCode: '', startsAt: '', endsAt: '' });
+      await selectChallenge(result.challenge.id);
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setCreating(false);
+    }
+  }
+
   if (me.role !== 'organizer') {
     return (
       <main className="narrow">
         <div className="card center">
           <LayoutDashboard size={32} />
           <h1>Кабинет организатора</h1>
-          <p className="muted">Откройте демо-роль, чтобы увидеть воронку и очередь проверки.</p>
+          <p className="muted">Воронка, модерация, внимание к командам и аналитика приглашений в рамках челленджа.</p>
           <button className="btn primary" onClick={() => demoLogin('organizer')}>Открыть демо-организатора</button>
         </div>
       </main>
@@ -546,11 +815,40 @@ function OrganizerPage({ me, demoLogin, refresh, toast }) {
     <main>
       <section className="page-head">
         <div>
-          <Badge tone="purple">Организатор</Badge>
+          <Badge tone="purple">Организатор · {data.challenge.is_demo ? 'Демо' : 'Пилот'}</Badge>
           <h1>Прогресс потока и проверка</h1>
-          <p className="muted">Главная метрика — подтверждённые публикации, а не регистрации.</p>
+          <p className="muted">{data.challenge.title}</p>
+        </div>
+        <div className="hero-actions">
+          <button className="btn ghost" onClick={() => setShowCreate((value) => !value)}><Plus size={16} /> Создать пилот</button>
+          {data.challenge.is_demo && <button className="btn ghost" disabled={busy === 'reset'} onClick={resetDemo}><RefreshCw size={16} /> Сбросить демо</button>}
         </div>
       </section>
+
+      {showCreate && (
+        <section className="card">
+          <div className="card-head"><h2>Новый пилотный челлендж</h2></div>
+          <form className="form-grid" onSubmit={createChallenge}>
+            <label className="full-width">Название
+              <input value={createForm.title} onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })} required />
+            </label>
+            <label className="full-width">Описание
+              <textarea rows={2} value={createForm.description} onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })} />
+            </label>
+            <label>Код приглашения
+              <input value={createForm.accessCode} onChange={(e) => setCreateForm({ ...createForm, accessCode: e.target.value.toUpperCase() })} placeholder="PILOT-2026" required />
+            </label>
+            <label>Начало
+              <input type="datetime-local" value={createForm.startsAt} onChange={(e) => setCreateForm({ ...createForm, startsAt: e.target.value })} required />
+            </label>
+            <label>Окончание
+              <input type="datetime-local" value={createForm.endsAt} onChange={(e) => setCreateForm({ ...createForm, endsAt: e.target.value })} required />
+            </label>
+            <button className="btn primary" disabled={creating}>{creating ? 'Создаём…' : 'Создать челлендж'}</button>
+          </form>
+        </section>
+      )}
+
       <section className="stats-grid">
         <StatCard icon={Users} label="Команд" value={org.funnel.total} />
         <StatCard icon={Rocket} label="Начали спринт" value={org.funnel.started} />
@@ -558,58 +856,61 @@ function OrganizerPage({ me, demoLogin, refresh, toast }) {
         <StatCard icon={CheckCircle2} label="Подтверждено" value={org.funnel.approved} />
       </section>
       <div className="notice">Конверсия в подтверждённую публикацию: <strong>{org.funnel.conversion}%</strong> · На проверке: {org.funnel.pending} · Возвращено: {org.funnel.returned}</div>
+      <GrowthPanel growth={org.growth} funnel={org.funnel} />
 
-      <section className="card">
-        <div className="card-head"><h2>Очередь проверки</h2><Badge tone="amber">{org.pending.length}</Badge></div>
-        {org.pending.length === 0 && <p className="muted">Нет заявок на проверке.</p>}
-        <div className="review-list">
-          {org.pending.map((item) => (
-            <article className="review-card" key={item.id}>
-              <div className="project-top">
-                <h3>{item.title} {item.is_demo && <Badge>Демо</Badge>}</h3>
-                <SubmissionBadge submission={item} />
-              </div>
-              <p className="muted">{item.team_name} · {item.school_name} · {item.countryName}</p>
-              <p>{item.description}</p>
-              <a className="link-btn" href={item.url} target="_blank" rel="noreferrer">{item.url} <ExternalLink size={14} /></a>
-              <textarea
-                rows={2}
-                placeholder="Комментарий для возврата на доработку"
-                value={comments[item.id] || ''}
-                onChange={(e) => setComments((prev) => ({ ...prev, [item.id]: e.target.value }))}
-              />
-              <div className="hero-actions">
-                <button className="btn primary" disabled={busy === item.id} onClick={() => review(item.id, 'approve')}>
-                  <ShieldCheck size={16} /> Подтвердить
-                </button>
-                <button className="btn ghost" disabled={busy === item.id} onClick={() => review(item.id, 'return')}>
-                  <AlertCircle size={16} /> Вернуть
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      <div className="tabs">
+        <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>Проверка ({org.pending.length})</button>
+        <button className={tab === 'attention' ? 'active' : ''} onClick={() => setTab('attention')}>Внимание ({org.attention.length})</button>
+        <button className={tab === 'teams' ? 'active' : ''} onClick={() => setTab('teams')}>Команды</button>
+      </div>
 
-      <section className="card">
-        <div className="card-head"><h2>Команды</h2></div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Команда</th><th>Школа</th><th>Шаги</th><th>Проект</th><th>Статус</th></tr></thead>
-            <tbody>
-              {org.teams.map((team) => (
-                <tr key={team.id}>
-                  <td><strong>{team.name}</strong><div className="muted small">{team.nickname}</div></td>
-                  <td>{team.school_name}<div className="muted small">{team.countryName}</div></td>
-                  <td>{team.steps_completed}/5</td>
-                  <td>{team.submission_title || '—'}</td>
-                  <td><SubmissionBadge submission={team.submission_status ? { status: team.submission_status } : null} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {tab === 'review' && (
+        <section className="card">
+          <div className="card-head"><h2>Очередь проверки</h2><Badge tone="amber">{org.pending.length}</Badge></div>
+          {org.pending.length === 0 && <p className="muted">Нет заявок на проверке.</p>}
+          <div className="review-list">
+            {org.pending.map((item) => (
+              <article className="review-card" key={item.id}>
+                <div className="project-top">
+                  <h3>{item.title} {item.is_demo && <Badge>Демо</Badge>}</h3>
+                  <SubmissionBadge submission={item} />
+                </div>
+                <p className="muted">{item.team_name} · {item.school_name} · {item.countryName}</p>
+                <p>{item.description}</p>
+                <a className="link-btn" href={item.url} target="_blank" rel="noreferrer">{item.url} <ExternalLink size={14} /></a>
+                <textarea
+                  rows={2}
+                  placeholder="Комментарий для возврата на доработку"
+                  value={comments[item.id] || ''}
+                  onChange={(e) => setComments((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                />
+                <div className="hero-actions">
+                  <button className="btn primary" disabled={busy === item.id} onClick={() => review(item.id, 'approve')}>
+                    <ShieldCheck size={16} /> Подтвердить
+                  </button>
+                  <button className="btn ghost" disabled={busy === item.id} onClick={() => review(item.id, 'return')}>
+                    <AlertCircle size={16} /> Вернуть
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {tab === 'attention' && (
+        <section className="card">
+          <div className="card-head"><h2>Команды, которым нужна помощь</h2></div>
+          <AttentionList teams={org.attention} onRemind={remind} busy={busy} />
+        </section>
+      )}
+
+      {tab === 'teams' && (
+        <section className="card">
+          <div className="card-head"><h2>Команды челленджа</h2></div>
+          <TeamsTable teams={org.teams} />
+        </section>
+      )}
     </main>
   );
 }
@@ -619,6 +920,11 @@ export default function App() {
   const [data, setData] = useState(null);
   const [me, setMe] = useState({ role: 'guest' });
   const [toastState, setToastState] = useState(null);
+  const toastTimer = useRef(null);
+  const [challengeId, setChallengeId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('challenge') || localStorage.getItem('ss_challenge') || '';
+  });
 
   function navigate(path) {
     window.location.hash = path;
@@ -628,17 +934,29 @@ export default function App() {
 
   function toast(message, tone = 'success') {
     setToastState({ message, tone });
-    window.setTimeout(() => setToastState(null), 4000);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToastState(null), 4000);
   }
 
-  async function refresh() {
-    const [bootstrap, session] = await Promise.all([api('/api/bootstrap'), api('/api/me')]);
+  async function refresh(ref = challengeId) {
+    const query = ref ? `?challenge=${encodeURIComponent(ref)}` : '';
+    const [bootstrap, session] = await Promise.all([api(`/api/bootstrap${query}`), api('/api/me')]);
     setData(bootstrap);
     setMe(session);
+    if (bootstrap.challenge) {
+      setChallengeId(bootstrap.challenge.id);
+      localStorage.setItem('ss_challenge', bootstrap.challenge.id);
+    }
+  }
+
+  async function selectChallenge(id) {
+    setChallengeId(id);
+    localStorage.setItem('ss_challenge', id);
+    await refresh(id);
   }
 
   useEffect(() => {
-    refresh().catch((error) => toast(error.message, 'error'));
+    refresh(challengeId).catch((error) => toast(error.message, 'error'));
     const onHash = () => setRoute(currentRoute());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -648,7 +966,7 @@ export default function App() {
     try {
       await api('/api/demo/login', { method: 'POST', body: JSON.stringify({ role }) });
       await refresh();
-      navigate(role === 'organizer' ? '/organizer' : '/team');
+      navigate(role === 'organizer' ? '/organizer' : role === 'teacher' ? '/teacher' : '/team');
     } catch (error) {
       toast(error.message, 'error');
     }
@@ -663,20 +981,21 @@ export default function App() {
   if (!data) return <div className="loading">Загрузка Startify Sprint…</div>;
 
   let page;
-  if (route === '/join') page = <JoinPage data={data} toast={toast} onJoined={async () => { await refresh(); navigate('/team'); }} />;
-  else if (route === '/team') page = <TeamPage me={me} refresh={refresh} navigate={navigate} toast={toast} demoLogin={demoLogin} />;
+  if (route === '/join') page = <JoinPage data={data} toast={toast} onJoined={async () => { await refresh(data.challenge.id); navigate('/team'); }} />;
+  else if (route === '/team') page = <TeamPage me={me} data={data} refresh={refresh} navigate={navigate} toast={toast} demoLogin={demoLogin} />;
   else if (route === '/leaderboard') page = <LeaderboardPage data={data} toast={toast} />;
-  else if (route === '/organizer') page = <OrganizerPage me={me} demoLogin={demoLogin} refresh={refresh} toast={toast} />;
+  else if (route === '/teacher') page = <TeacherPage me={me} data={data} challengeId={challengeId} refresh={refresh} toast={toast} demoLogin={demoLogin} />;
+  else if (route === '/organizer') page = <OrganizerPage me={me} data={data} challengeId={challengeId} refresh={refresh} toast={toast} demoLogin={demoLogin} selectChallenge={selectChallenge} />;
   else page = <Landing data={data} me={me} navigate={navigate} />;
 
   return (
     <div className="app">
-      <Header route={route} me={me} navigate={navigate} demoLogin={demoLogin} logout={logout} />
+      <Header route={route} me={me} data={data} challengeId={challengeId} selectChallenge={selectChallenge} navigate={navigate} demoLogin={demoLogin} logout={logout} />
       {page}
       <footer className="footer">
         Startify Sprint · MVP для Symbat Hackathon · Направление 2: Startup Creation & Activation
       </footer>
-      {toastState && <div className={`toast toast-${toastState.tone}`}>{toastState.message}</div>}
+      {toastState && <div className={`toast toast-${toastState.tone}`} role="status">{toastState.message}</div>}
     </div>
   );
 }

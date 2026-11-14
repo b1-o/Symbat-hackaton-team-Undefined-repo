@@ -34,6 +34,8 @@ export const STEPS = [
   }
 ];
 
+export const DEFAULT_REMINDER = 'Проверьте следующий шаг спринта. Если команда застряла, напишите учителю или организатору — поможем дойти до публикации.';
+
 export function normalizePassportUrl(input) {
   if (typeof input !== 'string' || !input.trim()) {
     return { ok: false, error: 'Укажите ссылку на паспорт проекта.' };
@@ -72,4 +74,39 @@ export function cleanText(value, max = 160) {
 
 export function countryName(code) {
   return COUNTRIES.find((country) => country.code === code)?.name || code;
+}
+
+export function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export function hoursBetween(from, to) {
+  if (!from || !to) return null;
+  const start = new Date(from).getTime();
+  const end = new Date(to).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return (end - start) / 3600000;
+}
+
+export function attentionReason(team, now = new Date()) {
+  if (team.submission_status === 'approved' || team.submission_status === 'pending') return null;
+  if (team.submission_status === 'returned') return 'Проект возвращён на доработку';
+  if (!team.started_at) return 'Команда ещё не начала спринт';
+  if ((team.steps_completed || 0) < 3) return 'Команда на раннем этапе';
+  if (!team.submission_status && (team.steps_completed || 0) >= 3) return 'Проверьте готовность к публикации';
+  const last = team.last_activity_at ? new Date(team.last_activity_at).getTime() : null;
+  if (last && now.getTime() - last >= 24 * 3600000) return 'Нет активности больше 24 часов';
+  return null;
+}
+
+export function challengeSlug(title) {
+  const base = cleanText(title, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return base || 'school-sprint';
 }

@@ -151,10 +151,22 @@ tbody tr:last-child td { border-bottom: 0; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: white; padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 50; max-width: min(92vw, 560px); }
 .toast-error { background: var(--red); }
 
+.badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.challenge-select { max-width: 280px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: white; color: var(--text); font-size: 0.85rem; }
+.metric-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+.metric-row div { border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: #fcfcfd; }
+.metric-row strong { display: block; font-size: 1.3rem; margin-bottom: 4px; }
+.reminder-card { border-color: #fde68a; background: #fffbeb; }
+.reminder-card .review-card { background: white; }
+.attention-card .btn { margin-top: 10px; }
+.card-head h2 { display: inline-flex; align-items: center; gap: 8px; }
+.notice svg, .muted svg { vertical-align: -2px; }
+
 @media (max-width: 900px) {
   .hero, .two-col { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .header { flex-wrap: wrap; }
+  .challenge-select { order: 2; max-width: none; flex: 1; }
   .nav { order: 3; width: 100%; margin-left: 0; }
   .header-role { margin-left: auto; }
 }

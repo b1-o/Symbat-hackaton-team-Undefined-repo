@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "MVP школьной лиги стартап-спринтов поверх AI Startify для Symbat Hackathon",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node server/index.js",
     "build": "vite build",
