@@ -8,7 +8,10 @@ import { STEPS, COUNTRIES } from '../server/lib.js';
 // contract that makes localisation safe: Russian is the key and the fallback.
 
 test('language switch falls back to Russian and never invents strings', () => {
-  assert.deepEqual(LANGUAGES.map(([code]) => code), ['ru', 'en']);
+  assert.deepEqual(
+    LANGUAGES.map(([code]) => code),
+    ['ru', 'en'],
+  );
   assert.equal(translate('Обзор', 'ru'), 'Обзор');
   assert.equal(translate('Обзор', 'en'), 'Overview');
   // Unknown key: show the Russian source rather than an empty label.
@@ -22,12 +25,18 @@ test('language switch falls back to Russian and never invents strings', () => {
 test('interpolation fills placeholders and leaves unknown ones alone', () => {
   assert.equal(format(translate('{done} из 5 этапов', 'en'), { done: 3 }), '3 of 5 stages');
   assert.equal(format('{a} и {b}', { a: 0 }), '0 и {b}');
-  assert.equal(format('Пройдено {done} из 5 этапов. {next}', { done: 1, next: 'Дальше' }), 'Пройдено 1 из 5 этапов. Дальше');
+  assert.equal(
+    format('Пройдено {done} из 5 этапов. {next}', { done: 1, next: 'Дальше' }),
+    'Пройдено 1 из 5 этапов. Дальше',
+  );
 });
 
 test('server validation errors reach an English-speaking student in English', () => {
   assert.equal(translateError('Неверный код приглашения.', 'en'), 'Wrong invite code.');
-  assert.equal(translateError('Нужна ссылка на домен aistartify.com.', 'en'), 'The link must point to aistartify.com.');
+  assert.equal(
+    translateError('Нужна ссылка на домен aistartify.com.', 'en'),
+    'The link must point to aistartify.com.',
+  );
   assert.equal(translateError('Неверный код приглашения.', 'ru'), 'Неверный код приглашения.');
   // Unmapped server messages stay visible instead of disappearing.
   assert.equal(translateError('Неизвестная ошибка сервера', 'en'), 'Неизвестная ошибка сервера');
@@ -39,7 +48,10 @@ test('sprint steps and pilot countries ship an English block for every field', (
     for (const field of ['title', 'short', 'description', 'prompt', 'example']) {
       assert.ok(step[field], `step ${step.index} lost its Russian ${field}`);
       assert.ok(step.en?.[field], `step ${step.index} has no English ${field}`);
-      assert.ok(!/[А-Яа-яЁё]/.test(step.en[field]), `step ${step.index} English ${field} still contains Cyrillic`);
+      assert.ok(
+        !/[А-Яа-яЁё]/.test(step.en[field]),
+        `step ${step.index} English ${field} still contains Cyrillic`,
+      );
     }
   }
   assert.equal(COUNTRIES.length, 5);
@@ -51,8 +63,13 @@ test('sprint steps and pilot countries ship an English block for every field', (
 
 test('every string the student screens pass to t() has an English translation', () => {
   const files = [
-    'src/App.jsx', 'src/components/UI.jsx', 'src/pages/Dashboard.jsx', 'src/pages/Join.jsx',
-    'src/pages/Incubator.jsx', 'src/pages/League.jsx', 'src/pages/Showcase.jsx'
+    'src/App.jsx',
+    'src/components/UI.jsx',
+    'src/pages/Dashboard.jsx',
+    'src/pages/Join.jsx',
+    'src/pages/Incubator.jsx',
+    'src/pages/League.jsx',
+    'src/pages/Showcase.jsx',
   ];
   const missing = new Set();
   let checked = 0;

@@ -6,14 +6,17 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "MVP школьной лиги стартап-спринтов поверх AI Startify: команда, координатор школы и организатор. Symbat Hackathon.",
+  "description": "Школьная лига стартапов AI Startify: команды, координаторы и организаторы. Надёжный пилот для Symbat Hackathon.",
   "scripts": {
     "dev": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
     "start": "NODE_ENV=production node --env-file-if-exists=.env server/index.js",
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
-    "llm:check": "node --env-file-if-exists=.env scripts/check-llm.js"
+    "llm:check": "node --env-file-if-exists=.env scripts/check-llm.js",
+    "format": "prettier --write server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json",
+    "format:check": "prettier --check server src tests scripts docs README.md index.html vite.config.js playwright.config.js package.json",
+    "backup": "node --env-file-if-exists=.env scripts/backup.js"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",
@@ -26,10 +29,10 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "esbuild": "^0.28.2",
-    "jsdom": "^31.0.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "prettier": "^3.10.1",
     "supertest": "^7.3.2",
-    "vite": "^5.4.11"
+    "vite": "^6.4.6",
+    "jsdom": "^31.0.1"
   }
 }

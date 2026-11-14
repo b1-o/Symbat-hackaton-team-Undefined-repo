@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.arena
+.env
+.env.*
+!.env.example
+data
+backups
+coverage
+test-results
+playwright-report
+*.db
+*.db-*
